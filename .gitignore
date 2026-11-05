@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js / TypeScript 构建产物
+.next/
+.next-verify/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# 环境变量（含本地数据库凭据，请勿提交）
+.env*
+!.env.example
+
+# 测试与浏览器调试产物
+coverage/
+.playwright-cli/
+map.yaml
+*.log
+
+# 本地工具状态
+.workbuddy-ai/
+.DS_Store
+.vscode/
+.idea/

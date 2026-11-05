@@ -1,0 +1,242 @@
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
+import type { EventPayload, RunReportWord } from "@/lib/game/model";
+import type { QuestionRecord } from "@/lib/types";
+
+/** 单人 Local-First 玩家档案（第一版只有一条记录） */
+export const players = pgTable("players", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().default("岛主"),
+  coins: integer("coins").notNull().default(120),
+  xp: integer("xp").notNull().default(0),
+  streak: integer("streak").notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+  lastStudyDate: text("last_study_date"),
+  dailyGoal: integer("daily_goal").notNull().default(30),
+  lastLoginRewardDate: text("last_login_reward_date"),
+  totalAnswered: integer("total_answered").notNull().default(0),
+  totalCorrect: integer("total_correct").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const decks = pgTable("decks", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").unique(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  kind: text("kind").notNull().default("custom"), // builtin | custom
+  color: text("color").notNull().default("ocean"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const words = pgTable(
+  "words",
+  {
+    id: serial("id").primaryKey(),
+    deckId: integer("deck_id")
+      .notNull()
+      .references(() => decks.id, { onDelete: "cascade" }),
+    word: text("word").notNull(),
+    wordKey: text("word_key").notNull(),
+    phonetic: text("phonetic").notNull().default(""),
+    pos: text("pos").notNull().default(""),
+    meaning: text("meaning").notNull(),
+    example: text("example").notNull().default(""),
+    translation: text("translation").notNull().default(""),
+    difficulty: integer("difficulty").notNull().default(2),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("words_deck_word_key_idx").on(t.deckId, t.wordKey)],
+);
+
+export const wordProgress = pgTable(
+  "word_progress",
+  {
+    id: serial("id").primaryKey(),
+    wordId: integer("word_id")
+      .notNull()
+      .unique()
+      .references(() => words.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("new"), // new | learning | review | mastered
+    proficiency: integer("proficiency").notNull().default(0),
+    streak: integer("streak").notNull().default(0),
+    correctCount: integer("correct_count").notNull().default(0),
+    wrongCount: integer("wrong_count").notNull().default(0),
+    lapses: integer("lapses").notNull().default(0),
+    intervalMinutes: integer("interval_minutes").notNull().default(0),
+    lastReviewedAt: timestamp("last_reviewed_at", { withTimezone: true }),
+    nextReviewAt: timestamp("next_review_at", { withTimezone: true }),
+    firstLearnedAt: timestamp("first_learned_at", { withTimezone: true }),
+    masteredAt: timestamp("mastered_at", { withTimezone: true }),
+  },
+  (t) => [index("word_progress_next_review_idx").on(t.nextReviewAt)],
+);
+
+export const reviewLogs = pgTable(
+  "review_logs",
+  {
+    id: serial("id").primaryKey(),
+    wordId: integer("word_id")
+      .notNull()
+      .references(() => words.id, { onDelete: "cascade" }),
+    sessionId: integer("session_id"),
+    mode: text("mode").notNull(),
+    correct: boolean("correct").notNull(),
+    quality: integer("quality").notNull(),
+    responseMs: integer("response_ms").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("review_logs_created_idx").on(t.createdAt)],
+);
+
+export const studySessions = pgTable("study_sessions", {
+  id: serial("id").primaryKey(),
+  deckId: integer("deck_id"),
+  deckName: text("deck_name").notNull().default("全部词库"),
+  kind: text("kind").notNull().default("mixed"),
+  questions: jsonb("questions").$type<QuestionRecord[]>().notNull(),
+  total: integer("total").notNull(),
+  answered: integer("answered").notNull().default(0),
+  correct: integer("correct").notNull().default(0),
+  currentStreak: integer("current_streak").notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+  coinsEarned: integer("coins_earned").notNull().default(0),
+  xpEarned: integer("xp_earned").notNull().default(0),
+  bonusCoins: integer("bonus_coins").notNull().default(0),
+  bonusXp: integer("bonus_xp").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const dailyStats = pgTable("daily_stats", {
+  date: text("date").primaryKey(), // YYYY-MM-DD
+  newLearned: integer("new_learned").notNull().default(0),
+  reviewed: integer("reviewed").notNull().default(0),
+  correct: integer("correct").notNull().default(0),
+  total: integer("total").notNull().default(0),
+  coinsEarned: integer("coins_earned").notNull().default(0),
+  xpEarned: integer("xp_earned").notNull().default(0),
+  sessionsCompleted: integer("sessions_completed").notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+});
+
+export const buildings = pgTable("buildings", {
+  id: serial("id").primaryKey(),
+  type: text("type").notNull(),
+  level: integer("level").notNull().default(1),
+  slot: integer("slot").notNull().unique(),
+  builtAt: timestamp("built_at", { withTimezone: true }).notNull().defaultNow(),
+  upgradedAt: timestamp("upgraded_at", { withTimezone: true }),
+});
+
+export const taskClaims = pgTable(
+  "task_claims",
+  {
+    id: serial("id").primaryKey(),
+    date: text("date").notNull(),
+    taskKey: text("task_key").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("task_claims_date_key_idx").on(t.date, t.taskKey)],
+);
+
+export const achievements = pgTable("achievements", {
+  key: text("key").primaryKey(),
+  unlockedAt: timestamp("unlocked_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------- 探索 / 战斗 / 任务 / 道具 ----------
+
+export const explorations = pgTable("explorations", {
+  id: serial("id").primaryKey(),
+  regionKey: text("region_key").notNull(),
+  status: text("status").notNull().default("active"), // active | finished | retreated
+  totalEvents: integer("total_events").notNull().default(0),
+  resolvedEvents: integer("resolved_events").notNull().default(0),
+  hearts: integer("hearts").notNull().default(3),
+  maxHearts: integer("max_hearts").notNull().default(3),
+  answered: integer("answered").notNull().default(0),
+  correct: integer("correct").notNull().default(0),
+  currentStreak: integer("current_streak").notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+  coinsEarned: integer("coins_earned").notNull().default(0),
+  xpEarned: integer("xp_earned").notNull().default(0),
+  monstersDefeated: integer("monsters_defeated").notNull().default(0),
+  chestsFound: integer("chests_found").notNull().default(0),
+  bonusCoins: integer("bonus_coins").notNull().default(0),
+  bonusXp: integer("bonus_xp").notNull().default(0),
+  itemsFound: jsonb("items_found").$type<string[]>().notNull().default([]),
+  report: jsonb("report").$type<RunReportWord[]>().notNull().default([]),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const explorationEvents = pgTable(
+  "exploration_events",
+  {
+    id: serial("id").primaryKey(),
+    explorationId: integer("exploration_id")
+      .notNull()
+      .references(() => explorations.id, { onDelete: "cascade" }),
+    eventKey: text("event_key").notNull().unique(),
+    kind: text("kind").notNull(),
+    position: integer("position").notNull(),
+    status: text("status").notNull().default("pending"), // pending | resolved
+    payload: jsonb("payload").$type<EventPayload>().notNull(),
+    coinsEarned: integer("coins_earned").notNull().default(0),
+    xpEarned: integer("xp_earned").notNull().default(0),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [index("exploration_events_run_idx").on(t.explorationId)],
+);
+
+export const playerQuests = pgTable(
+  "player_quests",
+  {
+    id: serial("id").primaryKey(),
+    questKey: text("quest_key").notNull(),
+    npcKey: text("npc_key").notNull(),
+    progress: integer("progress").notNull().default(0),
+    target: integer("target").notNull().default(1),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("player_quests_key_idx").on(t.questKey)],
+);
+
+export const inventory = pgTable(
+  "inventory",
+  {
+    id: serial("id").primaryKey(),
+    itemKey: text("item_key").notNull().unique(),
+    qty: integer("qty").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const purchases = pgTable("purchases", {
+  id: serial("id").primaryKey(),
+  itemKey: text("item_key").notNull(),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  price: integer("price").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const regionProgress = pgTable("region_progress", {
+  regionKey: text("region_key").primaryKey(),
+  runs: integer("runs").notNull().default(0),
+  eventsResolved: integer("events_resolved").notNull().default(0),
+  monstersDefeated: integer("monsters_defeated").notNull().default(0),
+  chestsFound: integer("chests_found").notNull().default(0),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+});
