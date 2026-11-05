@@ -1,12 +1,13 @@
 {
-  "name": "nextjs-postgresql-template",
+  "name": "word-island",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "dotenv": "17.3.1",
@@ -17,7 +18,7 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "recharts": "^3.10.1",
-    "vitest": "^5.1.0"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.17",
@@ -30,6 +31,7 @@
     "eslint-config-next": "16.2.6",
     "postcss": "8.5.8",
     "tailwindcss": "4.1.17",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^5.1.0"
   }
 }

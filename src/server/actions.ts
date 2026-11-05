@@ -1,38 +1,47 @@
 "use server";
 
-import type { ActionResult, SessionKind, WordStatus } from "@/lib/types";
+import type { ActionResult } from "@/lib/types";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { claimLoginReward, updateDailyGoal } from "./dashboard";
 import { buildAt, removeBuilding, upgradeBuilding } from "./island";
 import { createSession, finishSession, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
 import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, updateWord } from "./vocab";
+import { sanitizeError, schemas } from "./validate";
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   try {
     return { ok: true, data: await fn() };
   } catch (e) {
     console.error("[action]", e);
-    return { ok: false, error: e instanceof Error ? e.message : "操作失败，请稍后重试" };
+    return { ok: false, error: sanitizeError(e) };
   }
 }
 
 // ---------- 学习 ----------
-export async function startSessionAction(input: { deckId: number | null; kind: SessionKind; size: number }) {
-  return run(() => createSession(input));
+export async function startSessionAction(input: { deckId: number | null; kind: string; size: number }) {
+  const parsed = schemas.startSession.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => createSession(parsed.data as Parameters<typeof createSession>[0]));
 }
 
 export async function answerAction(input: { sessionId: number; index: number; answer: string; responseMs: number; usedHint: boolean }) {
-  return run(() => submitAnswer(input));
+  const parsed = schemas.answer.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => submitAnswer(parsed.data));
 }
 
 export async function finishSessionAction(sessionId: number) {
-  return run(() => finishSession(sessionId));
+  const parsed = schemas.finishSession.safeParse(sessionId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => finishSession(parsed.data));
 }
 
 // ---------- 任务 / 奖励 ----------
 export async function claimTaskAction(taskKey: string) {
-  return run(() => claimTask(taskKey));
+  const parsed = schemas.claimTask.safeParse(taskKey);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => claimTask(parsed.data));
 }
 
 export async function claimLoginRewardAction() {
@@ -40,20 +49,28 @@ export async function claimLoginRewardAction() {
 }
 
 export async function updateDailyGoalAction(goal: number) {
-  return run(() => updateDailyGoal(goal));
+  const parsed = schemas.updateDailyGoal.safeParse(goal);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => updateDailyGoal(parsed.data));
 }
 
 // ---------- 岛屿 ----------
 export async function buildAction(type: string, slot: number) {
-  return run(() => buildAt(type, slot));
+  const parsed = schemas.build.safeParse({ type, slot });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => buildAt(parsed.data.type, parsed.data.slot));
 }
 
 export async function upgradeAction(buildingId: number) {
-  return run(() => upgradeBuilding(buildingId));
+  const parsed = schemas.upgrade.safeParse(buildingId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => upgradeBuilding(parsed.data));
 }
 
 export async function removeBuildingAction(buildingId: number) {
-  return run(() => removeBuilding(buildingId));
+  const parsed = schemas.removeBuilding.safeParse(buildingId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => removeBuilding(parsed.data));
 }
 
 // ---------- 词库 ----------
@@ -61,34 +78,50 @@ export async function listDecksAction() {
   return run(() => listDecks());
 }
 
-export async function getWordsAction(input: { deckId: number | null; q?: string; status?: WordStatus | "all"; wrongOnly?: boolean; limit?: number; offset?: number }) {
-  return run(() => getWords(input));
+export async function getWordsAction(input: { deckId: number | null; q?: string; status?: string; wrongOnly?: boolean; limit?: number; offset?: number }) {
+  const parsed = schemas.getWords.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => getWords(parsed.data as Parameters<typeof getWords>[0]));
 }
 
 export async function createDeckAction(name: string, description: string) {
-  return run(() => createDeck(name, description));
+  const parsed = schemas.createDeck.safeParse({ name, description });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => createDeck(parsed.data.name, parsed.data.description));
 }
 
 export async function deleteDeckAction(id: number) {
-  return run(() => deleteDeck(id));
+  const parsed = schemas.deleteDeck.safeParse(id);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => deleteDeck(parsed.data));
 }
 
 export async function addWordAction(deckId: number, input: WordInput) {
-  return run(() => addWord(deckId, input));
+  const parsed = schemas.addWord.safeParse({ deckId, input });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => addWord(parsed.data.deckId, parsed.data.input));
 }
 
 export async function updateWordAction(id: number, input: WordInput) {
-  return run(() => updateWord(id, input));
+  const parsed = schemas.updateWord.safeParse({ id, input });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => updateWord(parsed.data.id, parsed.data.input));
 }
 
 export async function deleteWordAction(id: number) {
-  return run(() => deleteWord(id));
+  const parsed = schemas.deleteWord.safeParse(id);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => deleteWord(parsed.data));
 }
 
 export async function importWordsAction(input: { deckId: number | null; newDeckName: string | null; text: string; format: ImportFormat }) {
-  return run(() => importWords(input));
+  const parsed = schemas.importWords.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => importWords(parsed.data as Parameters<typeof importWords>[0]));
 }
 
 export async function exportDeckAction(deckId: number, format: ImportFormat) {
-  return run(() => exportDeck(deckId, format));
+  const parsed = schemas.exportDeck.safeParse({ deckId, format });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => exportDeck(parsed.data.deckId, parsed.data.format));
 }

@@ -1,5 +1,13 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not set. Copy .env.example to .env and configure your database connection.");
+}
 
 export default defineConfig({
   resolve: {
@@ -13,7 +21,7 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30000,
     env: {
-      DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:5432/app_db",
+      DATABASE_URL: databaseUrl,
     },
   },
 });
