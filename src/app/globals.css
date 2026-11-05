@@ -269,6 +269,43 @@ body {
   }
 }
 
+/* P1：命中时镜头推进 + 屏幕震动，答错时只有轻微格挡抖动 */
+@keyframes stage-hit {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  14% {
+    transform: translate(-6px, 3px) scale(1.04);
+  }
+  32% {
+    transform: translate(6px, -4px) scale(1.025);
+  }
+  52% {
+    transform: translate(-4px, 2px) scale(1.012);
+  }
+  74% {
+    transform: translate(2px, -1px) scale(1.004);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+@keyframes stage-miss {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  55% {
+    transform: translateX(4px);
+  }
+  80% {
+    transform: translateX(-2px);
+  }
+}
+
 @layer utilities {
   .animate-float {
     animation: float 6s ease-in-out infinite;
@@ -386,6 +423,14 @@ body {
   .battle-stele {
     animation: stele-rise 0.35s ease-out both;
   }
+  .stage-hit {
+    animation: stage-hit 0.52s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+    transform-origin: 50% 80%;
+  }
+  .stage-miss {
+    animation: stage-miss 0.4s ease-out both;
+    transform-origin: 50% 80%;
+  }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -424,7 +469,9 @@ body {
   .battle-beam path,
   .battle-impact,
   .damage-number,
-  .battle-stele {
+  .battle-stele,
+  .stage-hit,
+  .stage-miss {
     animation: none !important;
   }
   .rune-chosen {

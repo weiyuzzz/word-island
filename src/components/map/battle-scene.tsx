@@ -8,6 +8,7 @@ import { MODE_META } from "@/lib/game/srs";
 import { cn } from "@/lib/utils";
 import { Button, CoinIcon, SpeakButton, speak } from "../ui";
 import { MonsterArt } from "./monster-art";
+import { BattleCanvas, type FxKind } from "./scene-canvas";
 
 export type RunPhase = "question" | "feedback" | "reward" | "summary";
 
@@ -16,6 +17,8 @@ interface BattleSceneProps {
   event: ClientEventView;
   question: ClientQuestion | null;
   phase: RunPhase;
+  /** canvas = P1 Canvas 2D 场景；svg = P0 DOM 词贝（无障碍 / 降级） */
+  renderMode: "canvas" | "svg";
   chosen: string | null;
   result: EventResult | null;
   pending: boolean;
@@ -235,10 +238,12 @@ function RewardChip({ children, tone }: { children: ReactNode; tone: string }) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold", tone)}>{children}</span>;
 }
 
-export function BattleScene({ view, event, question, phase, chosen, result, pending, typed, onTyped, onSubmit, onNext, onAdvance, inputRef }: BattleSceneProps) {
+export function BattleScene({ view, event, question, phase, renderMode, chosen, result, pending, typed, onTyped, onSubmit, onNext, onAdvance, inputRef }: BattleSceneProps) {
   const scenery = SCENERY[view.regionKey] ?? SCENERY.forest;
   const isFeedback = phase === "feedback" && !!result;
   const isCasting = phase === "question" && !!chosen && pending;
+  const isCanvas = renderMode === "canvas";
+  const opts = question?.options ?? [];
   const monster = event.monster;
   // 怪物事件沿用服务端 HP；非怪物事件把同一条横杠解释成「试炼进度」，避免出现 0/20 的空血条
   const total = Math.max(1, event.questionCount);
@@ -249,6 +254,12 @@ export function BattleScene({ view, event, question, phase, chosen, result, pend
   const defeated = !!monster && hp <= 0;
   const correctHit = isFeedback && !!result?.correct;
   const blocked = isFeedback && !result?.correct;
+
+  // P1 精灵时间轴：把 React 的答题阶段翻译成 canvas 的特效事件
+  const fxKind: FxKind =
+    phase === "reward" ? "reward" : isFeedback ? (result?.correct ? "hit" : "miss") : isCasting ? "cast" : null;
+  const fxKey = [event.eventKey, question?.index ?? -1, phase, chosen ?? "", pending ? "pending" : "idle"].join("|");
+  const stageKey = result ? `${result.eventKey}-${result.questionIndex}-${phase}` : "idle";
 
   const TOKEN_TILT = ["-1.4deg", "1.1deg", "0.8deg", "-1deg"];
   const tokenStyle = (i: number): CSSProperties =>
@@ -263,6 +274,39 @@ export function BattleScene({ view, event, question, phase, chosen, result, pend
     <div className="relative mt-3 overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-soft">
       <div className="relative w-full" style={{ aspectRatio: "900 / 470", minHeight: 400 }}>
         <Backdrop scenery={scenery} />
+
+        {/* P1：Canvas 2D 渲染层（粒子 / 拖拽词贝 / 镜头推进 / 屏幕震动） */}
+        {isCanvas && (
+          <BattleCanvas
+            regionKey={view.regionKey}
+            phase={phase}
+            options={opts}
+            chosen={chosen}
+            correctAnswer={isFeedback ? (result?.correctAnswer ?? null) : null}
+            pending={pending}
+            fxKey={fxKey}
+            fxKind={fxKind}
+            damage={result?.attack.damage ?? 0}
+            onSubmit={onSubmit}
+          />
+        )}
+        {isCanvas && opts.length > 0 && (
+          <>
+            {/* canvas 本身 aria-hidden，这里给键盘 / 读屏提供等价控件 */}
+            <div className="sr-only" role="group" aria-label="答案词贝">
+              {opts.map((opt, i) => (
+                <button key={opt} type="button" disabled={phase !== "question" || pending} onClick={() => onSubmit(opt)}>
+                  选项 {i + 1}：{opt}
+                </button>
+              ))}
+            </div>
+            {phase === "question" && !chosen && (
+              <div className="pointer-events-none absolute left-1/2 top-[41%] z-[7] -translate-x-1/2 whitespace-nowrap rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-medium text-slate-600 shadow-sm sm:text-[11px]">
+                拖动词贝到怪物法阵 · 或直接点击 / 按 1–4
+              </div>
+            )}
+          </>
+        )}
 
         {/* 场景内 HUD：怪物血条与连击 */}
         <div className="absolute right-[5%] top-[6%] z-10 w-[30%] min-w-[130px]">
@@ -297,16 +341,16 @@ export function BattleScene({ view, event, question, phase, chosen, result, pend
           </div>
         )}
 
-        {/* 角色与怪物 */}
-        <div className="pointer-events-none absolute bottom-[16%] left-[4%] z-[5] w-[17%] min-w-[86px]">
+        {/* 角色与怪物：命中/格挡时整层推进 + 震动 */}
+        <div key={`hero-${stageKey}`} className={cn("pointer-events-none absolute bottom-[16%] left-[4%] z-[5] w-[17%] min-w-[86px]", correctHit && "stage-hit", blocked && "stage-miss")}>
           <HeroArt casting={isCasting} guarding={blocked} />
         </div>
-        <div className={cn("pointer-events-none absolute bottom-[14%] right-[4%] z-[5] w-[28%] min-w-[130px] transition-opacity duration-500", defeated && "opacity-35 grayscale")}>
+        <div key={`monster-${stageKey}`} className={cn("pointer-events-none absolute bottom-[14%] right-[4%] z-[5] w-[28%] min-w-[130px] transition-opacity duration-500", correctHit && "stage-hit", blocked && "stage-miss", defeated && "opacity-35 grayscale")}>
           <MonsterArt art={monster?.art ?? "slime"} hit={correctHit} />
         </div>
 
-        {/* 答案实体：飘在场景里的词贝 */}
-        {question?.options && question.options.length > 0 && phase !== "reward" && (
+        {/* P0 答案实体：DOM 词贝（简洁模式 / 降级路径） */}
+        {!isCanvas && question?.options && question.options.length > 0 && phase !== "reward" && (
           <div className="absolute left-[26%] right-[26%] top-[46%] z-10 grid grid-cols-2 gap-2.5">
             {question.options.map((opt, i) => {
               const state = isFeedback
@@ -369,25 +413,27 @@ export function BattleScene({ view, event, question, phase, chosen, result, pend
           </form>
         )}
 
-        {/* 施法轨迹、命中爆点、伤害飘字 */}
-        <svg className="pointer-events-none absolute inset-0 z-[8] h-full w-full" viewBox="0 0 900 470" preserveAspectRatio="none" aria-hidden>
-          {(isCasting || correctHit) && (
-            <g key={`beam-${result?.questionIndex ?? "cast"}`} className="battle-beam">
-              <path d="M180 300 Q450 215 735 290" fill="none" stroke="#fff3c4" strokeWidth="12" strokeLinecap="round" />
-              <path d="M180 300 Q450 215 735 290" fill="none" stroke="#f7c948" strokeWidth="5" strokeLinecap="round" />
-            </g>
-          )}
-          {correctHit && (
-            <g key={`impact-${result?.questionIndex}`} transform="translate(735 290)">
-              <g className="battle-impact">
-                {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
-                  <path key={a} d="M18 0 L46 0" stroke="#fff3c4" strokeWidth="7" strokeLinecap="round" transform={`rotate(${a})`} />
-                ))}
-                <circle r="20" fill="#fff" opacity="0.85" />
+        {/* 施法轨迹、命中爆点（P1 由 canvas 粒子承担，P0 保留 SVG） */}
+        {!isCanvas && (
+          <svg className="pointer-events-none absolute inset-0 z-[8] h-full w-full" viewBox="0 0 900 470" preserveAspectRatio="none" aria-hidden>
+            {(isCasting || correctHit) && (
+              <g key={`beam-${result?.questionIndex ?? "cast"}`} className="battle-beam">
+                <path d="M180 300 Q450 215 735 290" fill="none" stroke="#fff3c4" strokeWidth="12" strokeLinecap="round" />
+                <path d="M180 300 Q450 215 735 290" fill="none" stroke="#f7c948" strokeWidth="5" strokeLinecap="round" />
               </g>
-            </g>
-          )}
-        </svg>
+            )}
+            {correctHit && (
+              <g key={`impact-${result?.questionIndex}`} transform="translate(735 290)">
+                <g className="battle-impact">
+                  {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+                    <path key={a} d="M18 0 L46 0" stroke="#fff3c4" strokeWidth="7" strokeLinecap="round" transform={`rotate(${a})`} />
+                  ))}
+                  <circle r="20" fill="#fff" opacity="0.85" />
+                </g>
+              </g>
+            )}
+          </svg>
+        )}
         {correctHit && result && (
           <span key={`dmg-${result.questionIndex}`} className="damage-number absolute right-[15%] top-[34%] z-[9] text-3xl font-black text-coral-600">-{result.attack.damage}</span>
         )}

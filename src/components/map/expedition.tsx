@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, BookOpen, Check, Heart, Landmark, Lightbulb, MessageCircle, Mountain, Package, RotateCcw, Sparkles, Swords, TentTree, Trophy, Waves, X, Zap } from "lucide-react";
+import { ArrowRight, Check, Heart, Landmark, Lightbulb, MessageCircle, Mountain, Package, RotateCcw, Sparkles, TentTree, Trophy, Waves, X, Zap } from "lucide-react";
 import type { ClientEventView, EventResult, ExpeditionSummary, ExpeditionView, QuestView } from "@/lib/game/model";
 import type { ClientQuestion } from "@/lib/types";
 import { getItemDef } from "@/data/items";
@@ -19,6 +19,16 @@ interface Props {
   onExit: () => void;
 }
 
+/** canvas = P1 Canvas 场景；svg = P0 SVG 场景（降级）；classic = 极速文字 */
+type RunMode = "canvas" | "svg" | "classic";
+const RUN_MODES: RunMode[] = ["canvas", "svg", "classic"];
+const MODE_LABEL: Record<RunMode, string> = { canvas: "场景", svg: "简洁", classic: "极速" };
+const MODE_HINT: Record<RunMode, string> = {
+  canvas: "P1 Canvas 场景：可拖拽词贝、粒子与镜头推进",
+  svg: "P0 SVG 场景：静态 DOM 词贝，兼容读屏与低性能设备",
+  classic: "极速答题：纯文字卡片，无动画",
+};
+
 const MODE_KEY = "word-island:expedition-mode";
 const MODE_EVENT = "word-island:mode-change";
 
@@ -31,16 +41,20 @@ function subscribeMode(onChange: () => void) {
   };
 }
 
-function getModeSnapshot() {
+function getModeSnapshot(): RunMode {
   try {
-    return window.localStorage.getItem(MODE_KEY) === "classic" ? "classic" : "scene";
+    const stored = window.localStorage.getItem(MODE_KEY);
+    // 旧版只有 scene / classic：scene 直接升级到 P1
+    if (stored === "classic") return "classic";
+    if (stored === "svg") return "svg";
+    return "canvas";
   } catch {
-    return "scene";
+    return "canvas";
   }
 }
 
-function getServerModeSnapshot() {
-  return "scene";
+function getServerModeSnapshot(): RunMode {
+  return "canvas";
 }
 
 function EventBanner({ event }: { event: ClientEventView }) {
@@ -235,7 +249,7 @@ export function ExpeditionRun({ initial, onExit }: Props) {
   const [quests, setQuests] = useState<QuestView[]>([]);
   const [pending, startTransition] = useTransition();
   const mode = useSyncExternalStore(subscribeMode, getModeSnapshot, getServerModeSnapshot);
-  const sceneMode = mode === "scene";
+  const sceneMode = mode !== "classic";
   const startRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -245,14 +259,14 @@ export function ExpeditionRun({ initial, onExit }: Props) {
     setLastQuestion(null);
   }, []);
 
-  const toggleMode = useCallback(() => {
+  const setMode = useCallback((next: RunMode) => {
     try {
-      window.localStorage.setItem(MODE_KEY, sceneMode ? "classic" : "scene");
+      window.localStorage.setItem(MODE_KEY, next);
     } catch {
       // 隐私模式下 localStorage 不可用，仅切换当前会话
     }
     window.dispatchEvent(new Event(MODE_EVENT));
-  }, [sceneMode]);
+  }, []);
 
   const event: ClientEventView | undefined = view.events[cursor];
   const q = event?.question ?? null;
@@ -440,7 +454,24 @@ export function ExpeditionRun({ initial, onExit }: Props) {
     );
   }
 
-  if (!event) return null;
+  // 刷新页面时若所有事件都已结算（例如停在最后一个事件的奖励页），
+  // 不能返回 null 留下空白屏，给一个明确的结算入口。
+  if (!event) {
+    return (
+      <div className="mx-auto max-w-md animate-fade-up">
+        <Card className="p-8 text-center">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-sun-100 text-sun-600">
+            <Trophy className="h-8 w-8" />
+          </div>
+          <h2 className="mt-3 text-lg font-bold">探索已结束</h2>
+          <p className="mt-1.5 text-sm text-slate-500">所有事件都已完成，点击结算本次冒险。</p>
+          <Button size="lg" className="mt-5" onClick={finish} icon={<ArrowRight className="h-5 w-5" />}>
+            查看探索总结
+          </Button>
+        </Card>
+      </div>
+    );
+  }
   const attackLabel = q ? ATTACK[q.mode] : null;
 
   const hud = (
@@ -473,21 +504,32 @@ export function ExpeditionRun({ initial, onExit }: Props) {
           {q && <Pill tone="ocean">{MODE_META[q.mode].label}</Pill>}
           {q?.isNew && <Pill tone="sun">新词</Pill>}
           {view.currentStreak >= 3 && <Pill tone="coral">连击 ×{view.currentStreak}</Pill>}
-          <button
-            type="button"
-            onClick={toggleMode}
-            title={sceneMode ? "切换到极速答题" : "切换到场景战斗"}
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-500 transition hover:border-ocean-300 hover:text-ocean-600"
-          >
-            {sceneMode ? <BookOpen className="h-3 w-3" /> : <Swords className="h-3 w-3" />}
-            {sceneMode ? "极速" : "场景"}
-          </button>
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white p-0.5" role="group" aria-label="答题模式">
+            {RUN_MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                title={MODE_HINT[m]}
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px] font-medium transition",
+                  mode === m ? "bg-ocean-500 text-white shadow-sm" : "text-slate-500 hover:text-ocean-600",
+                )}
+              >
+                {MODE_LABEL[m]}
+              </button>
+            ))}
+          </span>
         </span>
       </div>
     </>
   );
 
-  // P0 场景战斗：同一套 server actions，只是把答案变成场景里的实体
+  // 多回合首领战里服务端会提前返回下一题；反馈态必须继续显示「刚答的那题」的词贝
+  const sceneQuestion = phase === "feedback" ? (lastQuestion ?? q) : (q ?? lastQuestion);
+
+  // 场景战斗：同一套 server actions，只是把答案变成场景里的实体
   if (sceneMode) {
     return (
       <div className="mx-auto max-w-4xl">
@@ -495,8 +537,9 @@ export function ExpeditionRun({ initial, onExit }: Props) {
         <BattleScene
           view={view}
           event={event}
-          question={q ?? lastQuestion}
+          question={sceneQuestion}
           phase={phase}
+          renderMode={mode === "canvas" ? "canvas" : "svg"}
           chosen={chosen}
           result={result}
           pending={pending}

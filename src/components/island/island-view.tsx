@@ -174,6 +174,8 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const [coinDelta, setCoinDelta] = useState<{ v: number; k: number } | null>(null);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement>(null);
+  // k 只用来强制重播金币飘字动画，用自增序号即可，避免在渲染期读取 Date.now()
+  const deltaSeq = useRef(0);
 
   const { player, buildings, progress } = island;
   const selected = buildings.find((b) => b.id === selectedId) ?? null;
@@ -192,7 +194,7 @@ export function IslandView({ initial }: { initial: IslandState }) {
   };
 
   const showDelta = (before: number, after: number) => {
-    if (after !== before) setCoinDelta({ v: after - before, k: Date.now() });
+    if (after !== before) setCoinDelta({ v: after - before, k: ++deltaSeq.current });
   };
 
   const doBuild = (type: string, slot: number) => {

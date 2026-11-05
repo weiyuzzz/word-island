@@ -99,7 +99,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   const [earned, setEarned] = useState({ coins: 0, xp: 0, correct: 0, answered: 0 });
   const [sessionStreak, setSessionStreak] = useState(0);
   const [pending, startTransition] = useTransition();
-  const startRef = useRef<number>(Date.now());
+  const startRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const q = session.questions[index];
@@ -107,10 +107,6 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
   useEffect(() => {
     startRef.current = Date.now();
-    setChosen(null);
-    setTyped("");
-    setUsedHint(false);
-    setResult(null);
     if (q?.mode === "spelling") setTimeout(() => inputRef.current?.focus(), 50);
   }, [index, q?.mode]);
 
@@ -150,8 +146,14 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
   const next = useCallback(() => {
     if (phase !== "feedback") return;
-    if (index + 1 >= total) finish();
-    else setIndex((i) => i + 1);
+    if (index + 1 >= total) return finish();
+    // 进入下一题时显式复位答题态（原先只在 effect 里清空答案，phase 一直停在 feedback）
+    setChosen(null);
+    setTyped("");
+    setUsedHint(false);
+    setResult(null);
+    setPhase("answering");
+    setIndex((i) => i + 1);
   }, [phase, index, total, finish]);
 
   const exit = () => {

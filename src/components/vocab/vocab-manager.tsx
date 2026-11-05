@@ -61,9 +61,14 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
     return () => clearTimeout(t);
   }, [q]);
 
-  useEffect(() => {
+  // 筛选条件变化时把分页重置到第一页：用 React 推荐的「渲染期调整派生状态」写法，
+  // 避免在 effect 里同步 setState 造成额外的整页渲染。
+  const filterKey = `${deckId}|${debouncedQ}|${status}|${wrongOnly}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey);
     setPage(0);
-  }, [deckId, debouncedQ, status, wrongOnly]);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,6 +79,9 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
   }, [deckId, debouncedQ, status, wrongOnly, page, toast]);
 
   useEffect(() => {
+    // 词库数据来自服务端（外部系统），依赖变化时必须重新拉取；
+    // load 会立即把 loading 置为 true 以显示骨架屏，这是刻意的同步副作用。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
