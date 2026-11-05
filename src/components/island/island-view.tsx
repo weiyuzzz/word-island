@@ -2,13 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowUpCircle, Check, Hammer, Lock, Store, Trash2, X, Zap, Sparkles, GraduationCap } from "lucide-react";
+import { ArrowUpCircle, Box, Check, Hammer, LayoutGrid, Lock, Store, Trash2, X, Zap, Sparkles, GraduationCap } from "lucide-react";
 import { BUILDING_CATALOG, ISLAND_SLOTS, canPlaceOnSlot, getBuildingDef, maxLevel, refundFor, upgradeCost, type BuildingDef, type IslandSlot } from "@/lib/game/buildings";
 import type { BuildingView, IslandState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { buildAction, removeBuildingAction, upgradeAction } from "@/server/actions";
 import { Button, Card, CoinIcon, Pill, ProgressBar, useToast } from "../ui";
 import { BuildingArt, BuildingPreview } from "./building-art";
+import { Island3D } from "./island-3d";
+import { useSceneMode } from "../world/use-scene-mode";
 
 // ---------------- Scene ----------------
 function wavePath(y: number): string {
@@ -174,6 +176,7 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const [coinDelta, setCoinDelta] = useState<{ v: number; k: number } | null>(null);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement>(null);
+  const [sceneMode, setSceneMode] = useSceneMode("word-island:island-mode");
   // k 只用来强制重播金币飘字动画，用自增序号即可，避免在渲染期读取 Date.now()
   const deltaSeq = useRef(0);
 
@@ -314,6 +317,14 @@ export function IslandView({ initial }: { initial: IslandState }) {
               </div>
             </div>
           </div>
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white p-0.5" role="group" aria-label="岛屿呈现方式">
+            <button type="button" onClick={() => setSceneMode("3d")} aria-pressed={sceneMode === "3d"} title="P2 低多边形 3D 岛屿：可旋转、昼夜与天气" className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition", sceneMode === "3d" ? "bg-ocean-500 text-white shadow-sm" : "text-slate-500 hover:text-ocean-600")}>
+              <Box className="h-3.5 w-3.5" /> 立体
+            </button>
+            <button type="button" onClick={() => setSceneMode("flat")} aria-pressed={sceneMode === "flat"} title="平面插画：原有 SVG 岛屿，兼容低性能设备" className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition", sceneMode === "flat" ? "bg-ocean-500 text-white shadow-sm" : "text-slate-500 hover:text-ocean-600")}>
+              <LayoutGrid className="h-3.5 w-3.5" /> 平面
+            </button>
+          </span>
           <Button variant={panel === "shop" ? "primary" : "secondary"} icon={<Store className="h-4 w-4" />} onClick={() => { setPanel("shop"); setSelectedId(null); scrollPanel(); }}>
             商店
           </Button>
@@ -334,12 +345,20 @@ export function IslandView({ initial }: { initial: IslandState }) {
               </button>
             </div>
           )}
-          <div className="overflow-x-auto no-scrollbar">
-            <div className="min-w-[640px]">
-              <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+          {sceneMode === "3d" ? (
+            <div className="p-2">
+              <Island3D buildings={buildings} selectedId={selectedId} pendingType={pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
             </div>
-          </div>
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded-xl bg-white/80 px-2.5 py-1 text-[11px] text-slate-500 backdrop-blur lg:hidden">左右滑动查看全岛 · 点击空位建造</div>
+          ) : (
+            <div className="overflow-x-auto no-scrollbar">
+              <div className="min-w-[640px]">
+                <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+              </div>
+            </div>
+          )}
+          {sceneMode === "flat" && (
+            <div className="pointer-events-none absolute bottom-3 left-3 rounded-xl bg-white/80 px-2.5 py-1 text-[11px] text-slate-500 backdrop-blur lg:hidden">左右滑动查看全岛 · 点击空位建造</div>
+          )}
         </Card>
 
         {/* Panel */}

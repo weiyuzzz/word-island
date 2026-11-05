@@ -2,13 +2,15 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { BookOpen, Search, Sprout, TreeDeciduous, Trees, Flower2, Filter } from "lucide-react";
+import { BookOpen, Box, LayoutGrid, Search, Sprout, TreeDeciduous, Trees, Flower2, Filter } from "lucide-react";
 import type { GardenPlant, GardenStage } from "@/lib/game/model";
 import { STAGE_META } from "@/lib/game/garden-meta";
 import { STATUS_META, proficiencyLabel } from "@/lib/game/srs";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { getGardenAction } from "@/server/game-actions";
 import { Button, Card, EmptyState, Modal, Pill, ProgressBar, SpeakButton, STATUS_TONE, useToast } from "../ui";
+import { Garden3D } from "./garden-3d";
+import { useSceneMode } from "../world/use-scene-mode";
 
 const STAGES: (GardenStage | "all")[] = ["all", "seed", "sprout", "sapling", "tree", "bloom"];
 
@@ -107,6 +109,7 @@ export function GardenView({ initial }: { initial?: GardenData }) {
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState<GardenPlant | null>(null);
   const [loading, startTransition] = useTransition();
+  const [sceneMode, setSceneMode] = useSceneMode("word-island:garden-mode");
 
   useEffect(() => {
     if (initial) return;
@@ -144,6 +147,14 @@ export function GardenView({ initial }: { initial?: GardenData }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索单词" className="h-10 w-full rounded-2xl border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-leaf-400" />
           </div>
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white p-0.5" role="group" aria-label="花园呈现方式">
+            <button type="button" onClick={() => setSceneMode("3d")} aria-pressed={sceneMode === "3d"} title="P2 低多边形 3D 花圃：可旋转、拖动植株、昼夜与天气" className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition", sceneMode === "3d" ? "bg-leaf-500 text-white shadow-sm" : "text-slate-500 hover:text-leaf-600")}>
+              <Box className="h-3.5 w-3.5" /> 立体
+            </button>
+            <button type="button" onClick={() => setSceneMode("flat")} aria-pressed={sceneMode === "flat"} title="平面卡片网格：信息更密集，兼容低性能设备" className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition", sceneMode === "flat" ? "bg-leaf-500 text-white shadow-sm" : "text-slate-500 hover:text-leaf-600")}>
+              <LayoutGrid className="h-3.5 w-3.5" /> 平面
+            </button>
+          </span>
         </div>
       </Card>
 
@@ -162,6 +173,8 @@ export function GardenView({ initial }: { initial?: GardenData }) {
         />
       ) : visible.length === 0 ? (
         <EmptyState icon={<Filter className="h-7 w-7" />} title="没有符合条件的植物" description="换一个筛选条件试试。" />
+      ) : sceneMode === "3d" ? (
+        <Garden3D plants={visible} selectedId={detail?.id ?? null} onSelect={setDetail} />
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
           {visible.map((p) => (
