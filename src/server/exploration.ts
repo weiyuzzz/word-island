@@ -20,7 +20,8 @@ import { ATTACK, availableModes, buildChallenge, isCorrectAnswer, type WordLike 
 import { applyReview, gradeAnswer, initialProgress, type ProgressState } from "@/lib/game/srs";
 import type { ClientQuestion, QuizMode, WordDetail, WordStatus } from "@/lib/types";
 import { pickRandom, shuffle } from "@/lib/utils";
-import { getPlayer, lockPlayer, nextStreak, snapshot, type DbExecutor, type PlayerRow, type Tx } from "./player";
+import { getPlayer, lockPlayer, snapshot, type DbExecutor, type PlayerRow, type Tx } from "./player";
+import { currentUserId } from "./session";
 import { bumpQuest, getQuestViews, unlockQuestsForNpc } from "./quests";
 
 type WordRow = typeof words.$inferSelect;
@@ -41,7 +42,8 @@ export interface PlayerEffects {
 }
 
 export async function getEffects(executor: DbExecutor = db): Promise<PlayerEffects> {
-  const rows = await executor.select({ key: inventory.itemKey }).from(inventory);
+  const uid = await currentUserId();
+  const rows = await executor.select({ key: inventory.itemKey }).from(inventory).where(eq(inventory.userId, uid));
   const owned = new Set(rows.map((r) => r.key));
   return {
     luck: owned.has("lucky_charm"),
@@ -114,14 +116,14 @@ function pickMode(region: RegionDef, word: WordLike, prefer: QuizMode[] = []): Q
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
-async function loadPool(region: RegionDef): Promise<WordRow[]> {
-  const deckRows = await db.select({ id: sql<number>`decks.id` }).from(sql`decks`).where(sql`decks.slug in (${sql.join(region.deckSlugs.map((s) => sql`${s}`), sql`, `)})`);
+async function loadPool(region: RegionDef, userId: number): Promise<WordRow[]> {
+  const deckRows = await db.select({ id: sql<number>`decks.id` }).from(sql`decks`).where(sql`user_id = ${userId} and slug in (${sql.join(region.deckSlugs.map((s) => sql`${s}`), sql`, `)})`);
   const deckIds = deckRows.map((d) => d.id);
   if (deckIds.length === 0) return [];
   return db
     .select()
     .from(words)
-    .where(and(inArray(words.deckId, deckIds), gte(words.difficulty, region.difficulty[0]), lte(words.difficulty, region.difficulty[1])))
+    .where(and(eq(words.userId, userId), inArray(words.deckId, deckIds), gte(words.difficulty, region.difficulty[0]), lte(words.difficulty, region.difficulty[1])))
     .orderBy(asc(words.id));
 }
 
@@ -210,11 +212,11 @@ function buildEvent(kind: EventKind, region: RegionDef, wordsForEvent: WordRow[]
   }
 }
 
-async function generateEvents(region: RegionDef, kit: boolean, effects: PlayerEffects): Promise<EventPayload[]> {
-  const pool = await loadPool(region);
+async function generateEvents(region: RegionDef, userId: number, kit: boolean, effects: PlayerEffects): Promise<EventPayload[]> {
+  const pool = await loadPool(region, userId);
   if (pool.length < 4) throw new Error("该区域的词库单词不足，先去导入或学习更多单词吧");
 
-  const progressRows = await db.select().from(wordProgress);
+  const progressRows = await db.select().from(wordProgress).where(eq(wordProgress.userId, userId));
   const statuses = new Map<number, WordStatus>(progressRows.map((p) => [p.wordId, p.status as WordStatus]));
   const learned = pool.filter((w) => statuses.has(w.id) && statuses.get(w.id) !== "new");
   const fresh = pool.filter((w) => !statuses.has(w.id) || statuses.get(w.id) === "new");
@@ -303,13 +305,14 @@ async function expeditionView(executor: DbExecutor, run: ExplorationRow, events:
 // ---------- 对外接口 ----------
 
 export async function getMapState(): Promise<MapState> {
-  const player = await getPlayer();
+  const uid = await currentUserId();
+  const player = await getPlayer(db, uid);
   const effects = await getEffects();
-  const [learnedRow] = await db.select({ count: sql<number>`count(*)::int` }).from(wordProgress).where(ne(wordProgress.status, "new"));
+  const [learnedRow] = await db.select({ count: sql<number>`count(*)::int` }).from(wordProgress).where(and(eq(wordProgress.userId, uid), ne(wordProgress.status, "new")));
   const learned = learnedRow?.count ?? 0;
   const level = levelFromXp(player.xp).level;
-  const owned = new Set((await db.select().from(inventory)).map((r) => r.itemKey));
-  const progressRows = await db.select().from(regionProgress);
+  const owned = new Set((await db.select().from(inventory).where(eq(inventory.userId, uid))).map((r) => r.itemKey));
+  const progressRows = await db.select().from(regionProgress).where(eq(regionProgress.userId, uid));
   const progressMap = new Map(progressRows.map((p) => [p.regionKey, p]));
 
   const regions: RegionState[] = REGIONS.map((region) => {
@@ -338,29 +341,31 @@ export async function getMapState(): Promise<MapState> {
     active,
     ownedItems: [...owned].map((key) => ({ key, qty: 0 })),
     learnedCount: learned,
-    quests: await getQuestViews(db),
+    quests: await getQuestViews(db, uid),
   };
 }
 
 export async function getActiveExpedition(): Promise<ExpeditionView | null> {
-  const [run] = await db.select().from(explorations).where(eq(explorations.status, "active")).orderBy(asc(explorations.id)).limit(1);
+  const uid = await currentUserId();
+  const [run] = await db.select().from(explorations).where(and(eq(explorations.userId, uid), eq(explorations.status, "active"))).orderBy(asc(explorations.id)).limit(1);
   if (!run) return null;
   const region = getRegion(run.regionKey);
   if (!region) return null;
   const events = await db.select().from(explorationEvents).where(eq(explorationEvents.explorationId, run.id));
   const wordMap = await loadWordMap(events);
-  const player = await getPlayer();
+  const player = await getPlayer(db, uid);
   return expeditionView(db, run, events, wordMap, region, player);
 }
 
 export async function startExploration(regionKey: string, useTea = false): Promise<ExpeditionView> {
+  const uid = await currentUserId();
   const region = getRegion(regionKey);
   if (!region) throw new Error("区域不存在");
-  const player = await getPlayer();
+  const player = await getPlayer(db, uid);
   const state = await getMapState();
   const regionState = state.regions.find((r) => r.region.key === regionKey);
   if (!regionState?.unlocked) throw new Error(regionState?.unlockText || "该区域尚未解锁");
-  const [active] = await db.select({ id: explorations.id }).from(explorations).where(eq(explorations.status, "active"));
+  const [active] = await db.select({ id: explorations.id }).from(explorations).where(and(eq(explorations.userId, uid), eq(explorations.status, "active")));
   if (active) throw new Error("还有一场探索正在进行，请先完成或撤退");
 
   let maxHearts = 3;
@@ -368,18 +373,18 @@ export async function startExploration(regionKey: string, useTea = false): Promi
     const updated = await db
       .update(inventory)
       .set({ qty: sql`${inventory.qty} - 1` })
-      .where(and(eq(inventory.itemKey, "energy_tea"), sql`${inventory.qty} > 0`))
+      .where(and(eq(inventory.userId, uid), eq(inventory.itemKey, "energy_tea"), sql`${inventory.qty} > 0`))
       .returning({ id: inventory.id });
     if (updated.length === 0) throw new Error("还没有能量茶，可在商店购买");
     maxHearts = 4;
   }
 
   const effects = await getEffects();
-  const payloads = await generateEvents(region, effects.kit, effects);
+  const payloads = await generateEvents(region, uid, effects.kit, effects);
 
   const [run] = await db
     .insert(explorations)
-    .values({ regionKey, totalEvents: payloads.length, hearts: maxHearts, maxHearts })
+    .values({ userId: uid, regionKey, totalEvents: payloads.length, hearts: maxHearts, maxHearts })
     .returning();
 
   const rows = payloads.map((payload, i) => ({
@@ -393,7 +398,7 @@ export async function startExploration(regionKey: string, useTea = false): Promi
 
   const events = await db.select().from(explorationEvents).where(eq(explorationEvents.explorationId, run.id));
   const wordMap = await loadWordMap(events);
-  const fresh = await getPlayer();
+  const fresh = await getPlayer(db, uid);
   return expeditionView(db, run, events, wordMap, region, fresh);
 }
 
@@ -415,10 +420,11 @@ export interface ResolveInput {
 }
 
 export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
     const [row] = await tx.select().from(explorationEvents).where(eq(explorationEvents.eventKey, input.eventKey)).for("update");
     if (!row) throw new Error("事件不存在");
-    const [run] = await tx.select().from(explorations).where(eq(explorations.id, row.explorationId)).for("update");
+    const [run] = await tx.select().from(explorations).where(and(eq(explorations.id, row.explorationId), eq(explorations.userId, uid))).for("update");
     if (!run) throw new Error("探索不存在");
     const region = getRegion(run.regionKey);
     if (!region) throw new Error("区域配置缺失");
@@ -431,13 +437,13 @@ export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
 
     const [existing] = await tx.select().from(wordProgress).where(eq(wordProgress.wordId, q.wordId));
     const prev = toState(existing);
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
 
     if (q.answered) {
       return buildResult({
         row, run, region, payload, q, word, prev, player,
         correct: Boolean(q.wasCorrect), alreadyAnswered: true, rewardCoins: 0, rewardXp: 0, streakBonus: 0,
-        quality: q.wasCorrect ? 2 : 0, next: prev, eventReward: null, quests: await getQuestViews(tx),
+        quality: q.wasCorrect ? 2 : 0, next: prev, eventReward: null, quests: await getQuestViews(tx, uid),
         leveledUp: false, wordMap: await loadWordMap([row]),
       });
     }
@@ -451,6 +457,7 @@ export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
     await tx
       .insert(wordProgress)
       .values({
+        userId: uid,
         wordId: q.wordId,
         status: next.status,
         proficiency: next.proficiency,
@@ -480,7 +487,7 @@ export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
           masteredAt: next.status === "mastered" ? sql`coalesce(${wordProgress.masteredAt}, ${now.toISOString()}::timestamptz)` : null,
         },
       });
-    await tx.insert(reviewLogs).values({ wordId: q.wordId, sessionId: null, mode: q.mode, correct, quality, responseMs });
+    await tx.insert(reviewLogs).values({ userId: uid, wordId: q.wordId, sessionId: null, mode: q.mode, correct, quality, responseMs });
 
     const isReview = prev.status !== "new";
     const reward = answerReward({ quality, isNew: q.isNew, isReview, streakAfter: run.currentStreak + (correct ? 1 : 0) });
@@ -572,14 +579,14 @@ export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
 
     // 任务进度
     if (correct) {
-      await bumpQuest(tx, "correct", 1);
-      if (q.mode === "spelling") await bumpQuest(tx, "spelling", 1);
+      await bumpQuest(tx, uid, "correct", 1);
+      if (q.mode === "spelling") await bumpQuest(tx, uid, "spelling", 1);
     }
-    if (resolved && row.status === "pending" && payload.monster && monsterDead) await bumpQuest(tx, "monsters", 1);
+    if (resolved && row.status === "pending" && payload.monster && monsterDead) await bumpQuest(tx, uid, "monsters", 1);
     const foundChest = resolved && row.status === "pending" && (row.kind === "treasure" || row.kind === "cave");
-    if (foundChest) await bumpQuest(tx, "treasures", 1);
+    if (foundChest) await bumpQuest(tx, uid, "treasures", 1);
     if (payload.npc) {
-      await unlockQuestsForNpc(tx, payload.npc.key, {
+      await unlockQuestsForNpc(tx, uid, payload.npc.key, {
         correct: run.correct + (correct ? 1 : 0),
         spelling: 0,
         monsters: run.monstersDefeated + (resolved && row.status === "pending" && payload.monster && monsterDead ? 1 : 0),
@@ -596,7 +603,7 @@ export async function resolveEvent(input: ResolveInput): Promise<EventResult> {
       row: updatedRow, run: updatedRun, region, payload, q, word, prev, player: updatedPlayer,
       correct, alreadyAnswered: false, rewardCoins: Math.round(reward.coins * coinMultiplier), rewardXp: reward.xp,
       streakBonus: reward.streakBonus, quality, next, eventReward,
-      quests: await getQuestViews(tx),
+      quests: await getQuestViews(tx, uid),
       leveledUp: levelFromXp(updatedPlayer.xp).level > levelBefore,
       wordMap,
     });
@@ -659,14 +666,15 @@ function buildResult(input: BuildResultInput): EventResult {
 }
 
 export async function finishExploration(explorationId: number): Promise<ExpeditionSummary> {
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const [run] = await tx.select().from(explorations).where(eq(explorations.id, explorationId)).for("update");
+    const [run] = await tx.select().from(explorations).where(and(eq(explorations.id, explorationId), eq(explorations.userId, uid))).for("update");
     if (!run) throw new Error("探索不存在");
     const region = getRegion(run.regionKey);
     const completed = run.resolvedEvents >= run.totalEvents && run.status === "active";
     const bonusCoins = completed ? 25 : 8;
     const bonusXp = completed ? 20 : 5;
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
     const levelBefore = levelFromXp(player.xp).level;
 
     if (!run.finishedAt) {
@@ -688,6 +696,7 @@ export async function finishExploration(explorationId: number): Promise<Expediti
       await tx
         .insert(regionProgress)
         .values({
+          userId: uid,
           regionKey: run.regionKey,
           runs: 1,
           eventsResolved: run.resolvedEvents,
@@ -696,7 +705,7 @@ export async function finishExploration(explorationId: number): Promise<Expediti
           lastRunAt: new Date(),
         })
         .onConflictDoUpdate({
-          target: regionProgress.regionKey,
+          target: [regionProgress.userId, regionProgress.regionKey],
           set: {
             runs: sql`${regionProgress.runs} + 1`,
             eventsResolved: sql`${regionProgress.eventsResolved} + ${run.resolvedEvents}`,
@@ -731,13 +740,14 @@ export async function finishExploration(explorationId: number): Promise<Expediti
       wrongWords: report.filter((r) => !r.correct),
       player: snapshot(finalPlayer),
       leveledUp: levelFromXp(finalPlayer.xp).level > levelBefore,
-      quests: await getQuestViews(tx),
+      quests: await getQuestViews(tx, uid),
     };
   });
 }
 
 export async function abandonExploration(explorationId: number): Promise<void> {
-  const [run] = await db.select().from(explorations).where(eq(explorations.id, explorationId));
+  const uid = await currentUserId();
+  const [run] = await db.select().from(explorations).where(and(eq(explorations.id, explorationId), eq(explorations.userId, uid)));
   if (!run) return;
   await finishExploration(explorationId);
 }

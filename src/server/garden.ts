@@ -4,16 +4,18 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { GardenPlant, GardenStage } from "@/lib/game/model";
 import { STAGE_META, stageOf } from "@/lib/game/garden-meta";
 import { ensureSeeded } from "./player";
+import { currentUserId } from "./session";
 
 export { STAGE_META, stageOf };
 
 export async function getGarden(filter: GardenStage | "all" = "all") {
   await ensureSeeded();
+  const uid = await currentUserId();
   const rows = await db
     .select({ w: words, p: wordProgress })
     .from(wordProgress)
     .innerJoin(words, eq(words.id, wordProgress.wordId))
-    .where(and(gte(wordProgress.correctCount, 1), filter === "all" ? undefined : sql`${wordProgress.status} = ${filter === "bloom" ? "mastered" : wordProgress.status}`))
+    .where(and(eq(wordProgress.userId, uid), gte(wordProgress.correctCount, 1), filter === "all" ? undefined : sql`${wordProgress.status} = ${filter === "bloom" ? "mastered" : wordProgress.status}`))
     .orderBy(desc(wordProgress.proficiency), desc(wordProgress.correctCount))
     .limit(300);
 

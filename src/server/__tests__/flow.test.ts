@@ -3,7 +3,9 @@ import { sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { studySessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { createUserAccount } from "../auth";
 import { ensureSeeded, getPlayer, resetSeededFlagForTest } from "../player";
+import { __setUserForTest } from "../session";
 import { createSession, finishSession, submitAnswer } from "../study";
 import { buildAt, getIsland, upgradeBuilding } from "../island";
 import { claimTask, getDailyTasks } from "../tasks";
@@ -14,14 +16,19 @@ import { dateKey } from "@/lib/utils";
 async function resetDb() {
   // 测试库可能还没有表（首次运行），先建表再清空
   await ensureSeeded();
-  await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players restart identity cascade`);
+  await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players, sessions, users restart identity cascade`);
   resetSeededFlagForTest();
+  __setUserForTest(null);
 }
 
 describe("完整游戏闭环（真实数据库）", () => {
+  let testerId = 0;
   beforeAll(async () => {
     await resetDb();
     await ensureSeeded();
+    const user = await createUserAccount("tester", "test123456");
+    testerId = user.id;
+    __setUserForTest(user.id);
   });
 
   afterAll(async () => {
@@ -85,7 +92,7 @@ describe("完整游戏闭环（真实数据库）", () => {
     await expect(submitAnswer({ sessionId: session.id, index: 1, answer: "x", responseMs: 1, usedHint: false })).rejects.toThrow();
 
     // 每日任务：学习 10 个新词可领取，重复领取失败
-    const tasks = await getDailyTasks(db, afterFinish.dailyGoal);
+    const tasks = await getDailyTasks(db, testerId, afterFinish.dailyGoal);
     expect(tasks.find((t) => t.key === "new10")?.claimable).toBe(true);
     const claim = await claimTask("new10");
     expect(claim.player.coins).toBe(afterFinish.coins + 20);

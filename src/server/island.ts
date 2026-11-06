@@ -1,10 +1,11 @@
 import { db } from "@/db";
 import { buildings, players } from "@/db/schema";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { BUILDING_CATALOG, canPlaceOnSlot, getBuildingDef, getSlot, maxLevel, refundFor, upgradeCost } from "@/lib/game/buildings";
 import { levelFromXp } from "@/lib/game/economy";
 import type { AchievementView, BuildingView, IslandProgress, IslandState } from "@/lib/types";
 import { ensureSeeded, lockPlayer, snapshot, type DbExecutor, type PlayerRow } from "./player";
+import { currentUserId } from "./session";
 import { checkAchievements } from "./tasks";
 
 export function islandProgress(list: BuildingView[], level: number): IslandProgress {
@@ -20,7 +21,7 @@ export function islandProgress(list: BuildingView[], level: number): IslandProgr
 }
 
 async function loadState(executor: DbExecutor, player: PlayerRow): Promise<IslandState> {
-  const rows = await executor.select().from(buildings).orderBy(asc(buildings.slot));
+  const rows = await executor.select().from(buildings).where(eq(buildings.userId, player.userId!)).orderBy(asc(buildings.slot));
   const list: BuildingView[] = rows.map((r) => ({ id: r.id, type: r.type, level: r.level, slot: r.slot }));
   const snap = snapshot(player);
   return { buildings: list, player: snap, progress: islandProgress(list, snap.level) };
@@ -28,8 +29,15 @@ async function loadState(executor: DbExecutor, player: PlayerRow): Promise<Islan
 
 export async function getIsland(): Promise<IslandState> {
   await ensureSeeded();
-  const [player] = await db.select().from(players).orderBy(players.id).limit(1);
+  const uid = await currentUserId();
+  const player = await getPlayerForIsland(uid);
   return loadState(db, player);
+}
+
+async function getPlayerForIsland(uid: number): Promise<PlayerRow> {
+  const [player] = await db.select().from(players).where(eq(players.userId, uid)).limit(1);
+  if (!player) throw new Error("玩家档案初始化失败，请重新登录");
+  return player;
 }
 
 export async function buildAt(type: string, slotId: number): Promise<{ island: IslandState; achievements: AchievementView[] }> {
@@ -40,31 +48,33 @@ export async function buildAt(type: string, slotId: number): Promise<{ island: I
   if (!canPlaceOnSlot(def, slot)) {
     throw new Error(def.terrain === "beach" ? `${def.name}只能建在沙滩上` : `${def.name}只能建在草地上`);
   }
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
     const level = levelFromXp(player.xp).level;
     if (level < def.unlockLevel) throw new Error(`${def.name}需要达到 ${def.unlockLevel} 级才能解锁`);
-    const existing = await tx.select().from(buildings);
+    const existing = await tx.select().from(buildings).where(eq(buildings.userId, uid));
     if (existing.some((b) => b.slot === slotId)) throw new Error("这个位置已经有建筑了");
     if (def.unique && existing.some((b) => b.type === type)) throw new Error(`${def.name}只能建造一座`);
     if (player.coins < def.buildCost) throw new Error(`金币不足，还差 ${def.buildCost - player.coins} 金币`);
 
-    await tx.insert(buildings).values({ type, level: 1, slot: slotId });
+    await tx.insert(buildings).values({ userId: uid, type, level: 1, slot: slotId });
     const [updated] = await tx
       .update(players)
       .set({ coins: player.coins - def.buildCost })
       .where(eq(players.id, player.id))
       .returning();
-    const achievements = await checkAchievements(tx, {});
+    const achievements = await checkAchievements(tx, uid, {});
     const [finalPlayer] = achievements.length ? await tx.select().from(players).where(eq(players.id, player.id)) : [updated];
     return { island: await loadState(tx, finalPlayer), achievements };
   });
 }
 
 export async function upgradeBuilding(id: number): Promise<IslandState> {
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const player = await lockPlayer(tx);
-    const [b] = await tx.select().from(buildings).where(eq(buildings.id, id)).for("update");
+    const player = await lockPlayer(tx, uid);
+    const [b] = await tx.select().from(buildings).where(and(eq(buildings.id, id), eq(buildings.userId, uid))).for("update");
     if (!b) throw new Error("建筑不存在");
     const def = getBuildingDef(b.type);
     if (!def) throw new Error("未知的建筑类型");
@@ -82,9 +92,10 @@ export async function upgradeBuilding(id: number): Promise<IslandState> {
 }
 
 export async function removeBuilding(id: number): Promise<{ island: IslandState; refund: number }> {
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const player = await lockPlayer(tx);
-    const [b] = await tx.select().from(buildings).where(eq(buildings.id, id)).for("update");
+    const player = await lockPlayer(tx, uid);
+    const [b] = await tx.select().from(buildings).where(and(eq(buildings.id, id), eq(buildings.userId, uid))).for("update");
     if (!b) throw new Error("建筑不存在");
     if (b.type === "cabin") throw new Error("小木屋是岛主的家，不能拆除");
     const def = getBuildingDef(b.type);

@@ -1,11 +1,10 @@
 import { db } from "@/db";
-import { buildings, dailyStats, decks, players, words } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
-import { BUILTIN_DECKS, rowToWord } from "@/data/vocabulary";
-import { INITIAL_CABIN_SLOT } from "@/lib/game/buildings";
+import { dailyStats, players } from "@/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { levelFromXp } from "@/lib/game/economy";
 import type { PlayerSnapshot } from "@/lib/types";
-import { dateKey, normalizeWord, shiftDateKey } from "@/lib/utils";
+import { dateKey, shiftDateKey } from "@/lib/utils";
+import { currentUserId } from "./session";
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type DbExecutor = typeof db | Tx;
@@ -14,17 +13,33 @@ export type PlayerRow = typeof players.$inferSelect;
 let seededInProcess = false;
 
 /**
- * 首次访问时确保所有数据库表、索引以及初始种子数据（玩家、初始建筑、内置词库）都已就绪。
- * 即使运行环境在重建容器后没有重新执行 `drizzle-kit push`，`CREATE TABLE IF NOT EXISTS`
- * 也能保证探索 / 花园 / 岛屿商店等新增表自动创建，不会因为缺表导致 500。
+ * 首次访问时确保所有数据库表、索引以及多账号迁移都已完成：
+ * - 建 users / sessions 表；
+ * - 给所有用户级数据表补 user_id 列；
+ * - 把「单人版」的唯一约束换成 (user_id, …) 组合唯一，多账号互不冲突。
+ * 注意：本函数不再播种任何数据——玩家档案与内置词库在账号注册时按用户创建（auth.ts seedUserGames）。
  */
 export async function ensureSeeded(): Promise<void> {
   if (seededInProcess) return;
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(726001)`);
     await tx.execute(sql`
+      create table if not exists users (
+        id serial primary key,
+        username text not null unique,
+        password_hash text not null,
+        role text not null default 'user',
+        created_at timestamptz not null default now()
+      );
+      create table if not exists sessions (
+        token text primary key,
+        user_id integer not null references users(id) on delete cascade,
+        expires_at timestamptz not null,
+        created_at timestamptz not null default now()
+      );
       create table if not exists players (
         id serial primary key,
+        user_id integer,
         name text not null default '岛主',
         coins integer not null default 120,
         xp integer not null default 0,
@@ -39,7 +54,8 @@ export async function ensureSeeded(): Promise<void> {
       );
       create table if not exists decks (
         id serial primary key,
-        slug text unique,
+        user_id integer,
+        slug text,
         name text not null,
         description text not null default '',
         kind text not null default 'custom',
@@ -48,6 +64,7 @@ export async function ensureSeeded(): Promise<void> {
       );
       create table if not exists words (
         id serial primary key,
+        user_id integer,
         deck_id integer not null references decks(id) on delete cascade,
         word text not null,
         word_key text not null,
@@ -62,6 +79,7 @@ export async function ensureSeeded(): Promise<void> {
       create unique index if not exists words_deck_word_key_idx on words(deck_id, word_key);
       create table if not exists word_progress (
         id serial primary key,
+        user_id integer,
         word_id integer not null unique references words(id) on delete cascade,
         status text not null default 'new',
         proficiency integer not null default 0,
@@ -78,6 +96,7 @@ export async function ensureSeeded(): Promise<void> {
       create index if not exists word_progress_next_review_idx on word_progress(next_review_at);
       create table if not exists review_logs (
         id serial primary key,
+        user_id integer,
         word_id integer not null references words(id) on delete cascade,
         session_id integer,
         mode text not null,
@@ -89,6 +108,7 @@ export async function ensureSeeded(): Promise<void> {
       create index if not exists review_logs_created_idx on review_logs(created_at);
       create table if not exists study_sessions (
         id serial primary key,
+        user_id integer,
         deck_id integer,
         deck_name text not null default '全部词库',
         kind text not null default 'mixed',
@@ -106,7 +126,9 @@ export async function ensureSeeded(): Promise<void> {
         finished_at timestamptz
       );
       create table if not exists daily_stats (
-        date text primary key,
+        id serial primary key,
+        user_id integer,
+        date text not null,
         new_learned integer not null default 0,
         reviewed integer not null default 0,
         correct integer not null default 0,
@@ -118,25 +140,29 @@ export async function ensureSeeded(): Promise<void> {
       );
       create table if not exists buildings (
         id serial primary key,
+        user_id integer,
         type text not null,
         level integer not null default 1,
-        slot integer not null unique,
+        slot integer not null,
         built_at timestamptz not null default now(),
         upgraded_at timestamptz
       );
       create table if not exists task_claims (
         id serial primary key,
+        user_id integer,
         date text not null,
         task_key text not null,
         claimed_at timestamptz not null default now()
       );
-      create unique index if not exists task_claims_date_key_idx on task_claims(date, task_key);
       create table if not exists achievements (
-        key text primary key,
+        id serial primary key,
+        user_id integer,
+        key text not null,
         unlocked_at timestamptz not null default now()
       );
       create table if not exists explorations (
         id serial primary key,
+        user_id integer,
         region_key text not null,
         status text not null default 'active',
         total_events integer not null default 0,
@@ -161,7 +187,7 @@ export async function ensureSeeded(): Promise<void> {
       create table if not exists exploration_events (
         id serial primary key,
         exploration_id integer not null references explorations(id) on delete cascade,
-        event_key text not null unique,
+        event_key text not null,
         kind text not null,
         position integer not null,
         status text not null default 'pending',
@@ -173,6 +199,7 @@ export async function ensureSeeded(): Promise<void> {
       create index if not exists exploration_events_run_idx on exploration_events(exploration_id);
       create table if not exists player_quests (
         id serial primary key,
+        user_id integer,
         quest_key text not null,
         npc_key text not null,
         progress integer not null default 0,
@@ -180,15 +207,16 @@ export async function ensureSeeded(): Promise<void> {
         claimed_at timestamptz,
         updated_at timestamptz not null default now()
       );
-      create unique index if not exists player_quests_key_idx on player_quests(quest_key);
       create table if not exists inventory (
         id serial primary key,
-        item_key text not null unique,
+        user_id integer,
+        item_key text not null,
         qty integer not null default 1,
         created_at timestamptz not null default now()
       );
       create table if not exists purchases (
         id serial primary key,
+        user_id integer,
         item_key text not null,
         name text not null,
         kind text not null,
@@ -196,7 +224,9 @@ export async function ensureSeeded(): Promise<void> {
         created_at timestamptz not null default now()
       );
       create table if not exists region_progress (
-        region_key text primary key,
+        id serial primary key,
+        user_id integer,
+        region_key text not null,
         runs integer not null default 0,
         events_resolved integer not null default 0,
         monsters_defeated integer not null default 0,
@@ -204,43 +234,58 @@ export async function ensureSeeded(): Promise<void> {
         last_run_at timestamptz
       );
     `);
-    const [existing] = await tx.select({ id: players.id }).from(players).limit(1);
-    if (!existing) {
-      await tx.insert(players).values({});
-      await tx.insert(buildings).values({ type: "cabin", level: 1, slot: INITIAL_CABIN_SLOT }).onConflictDoNothing();
+    // 给老库补 user_id 列，以及原先作为主键、现在改为普通列的 id
+    for (const table of ["players", "decks", "words", "word_progress", "review_logs", "study_sessions", "daily_stats", "buildings", "task_claims", "achievements", "explorations", "player_quests", "inventory", "purchases", "region_progress"]) {
+      await tx.execute(sql.raw(`alter table ${table} add column if not exists user_id integer`));
     }
-    for (const deck of BUILTIN_DECKS) {
-      const inserted = await tx
-        .insert(decks)
-        .values({ slug: deck.slug, name: deck.name, description: deck.description, kind: "builtin", color: deck.color })
-        .onConflictDoNothing({ target: decks.slug })
-        .returning({ id: decks.id });
-      if (inserted.length === 0) continue;
-      const deckId = inserted[0].id;
-      const rows = deck.words.map((r) => {
-        const w = rowToWord(r);
-        return { ...w, deckId, wordKey: normalizeWord(w.word) };
-      });
-      await tx.insert(words).values(rows).onConflictDoNothing();
-    }
+    await tx.execute(sql`
+      alter table daily_stats add column if not exists id serial;
+      alter table achievements add column if not exists id serial;
+      alter table region_progress add column if not exists id serial;
+    `);
+    // 单人版的单列唯一约束 → (user_id, …) 组合唯一（多账号互不冲突）
+    // 约束名同时覆盖 drizzle-kit push 生成（*_unique）与手写 SQL（*_key）两种来源
+    await tx.execute(sql`
+      alter table daily_stats drop constraint if exists daily_stats_pkey;
+      alter table buildings drop constraint if exists buildings_slot_key;
+      alter table buildings drop constraint if exists buildings_slot_unique;
+      alter table achievements drop constraint if exists achievements_pkey;
+      alter table region_progress drop constraint if exists region_progress_pkey;
+      alter table inventory drop constraint if exists inventory_item_key_key;
+      alter table inventory drop constraint if exists inventory_item_key_unique;
+      alter table decks drop constraint if exists decks_slug_key;
+      alter table decks drop constraint if exists decks_slug_unique;
+      drop index if exists task_claims_date_key_idx;
+      drop index if exists player_quests_key_idx;
+      create unique index if not exists daily_stats_user_date_idx on daily_stats(user_id, date);
+      create unique index if not exists buildings_user_slot_idx on buildings(user_id, slot);
+      create unique index if not exists achievements_user_key_idx on achievements(user_id, key);
+      create unique index if not exists task_claims_user_date_key_idx on task_claims(user_id, date, task_key);
+      create unique index if not exists player_quests_user_key_idx on player_quests(user_id, quest_key);
+      create unique index if not exists inventory_user_item_idx on inventory(user_id, item_key);
+      create unique index if not exists region_progress_user_region_idx on region_progress(user_id, region_key);
+      create unique index if not exists decks_user_slug_idx on decks(user_id, slug);
+    `);
   });
   seededInProcess = true;
 }
 
-/** 仅供测试：测试清空数据库后调用，让 ensureSeeded 重新初始化数据 */
+/** 仅供测试：测试清空数据库后调用，让 ensureSeeded 重新执行迁移 */
 export function resetSeededFlagForTest(): void {
   seededInProcess = false;
 }
 
-export async function getPlayer(executor: DbExecutor = db): Promise<PlayerRow> {
+/** 按当前登录用户取玩家档案（注册时已创建，这里只做兜底） */
+export async function getPlayer(executor: DbExecutor = db, userId?: number): Promise<PlayerRow> {
   await ensureSeeded();
-  const [p] = await executor.select().from(players).orderBy(players.id).limit(1);
-  if (!p) throw new Error("玩家档案初始化失败");
+  const uid = userId ?? (await currentUserId());
+  const [p] = await executor.select().from(players).where(eq(players.userId, uid)).limit(1);
+  if (!p) throw new Error("玩家档案初始化失败，请重新登录");
   return p;
 }
 
-export async function lockPlayer(tx: Tx): Promise<PlayerRow> {
-  const [p] = await tx.select().from(players).orderBy(players.id).limit(1).for("update");
+export async function lockPlayer(tx: Tx, userId: number): Promise<PlayerRow> {
+  const [p] = await tx.select().from(players).where(eq(players.userId, userId)).limit(1).for("update");
   if (!p) throw new Error("玩家档案不存在");
   return p;
 }
@@ -298,7 +343,7 @@ export interface DailyDelta {
   bestStreak?: number;
 }
 
-export async function bumpDaily(tx: DbExecutor, date: string, d: DailyDelta): Promise<void> {
+export async function bumpDaily(tx: DbExecutor, userId: number, date: string, d: DailyDelta): Promise<void> {
   const v = {
     newLearned: d.newLearned ?? 0,
     reviewed: d.reviewed ?? 0,
@@ -311,9 +356,9 @@ export async function bumpDaily(tx: DbExecutor, date: string, d: DailyDelta): Pr
   };
   await tx
     .insert(dailyStats)
-    .values({ date, ...v })
+    .values({ userId, date, ...v })
     .onConflictDoUpdate({
-      target: dailyStats.date,
+      target: [dailyStats.userId, dailyStats.date],
       set: {
         newLearned: sql`${dailyStats.newLearned} + ${v.newLearned}`,
         reviewed: sql`${dailyStats.reviewed} + ${v.reviewed}`,
@@ -327,8 +372,9 @@ export async function bumpDaily(tx: DbExecutor, date: string, d: DailyDelta): Pr
     });
 }
 
-export async function getTodayStats(executor: DbExecutor = db, today: string = dateKey()) {
-  const [row] = await executor.select().from(dailyStats).where(eq(dailyStats.date, today));
+export async function getTodayStats(executor: DbExecutor = db, userId?: number, today: string = dateKey()) {
+  const uid = userId ?? (await currentUserId());
+  const [row] = await executor.select().from(dailyStats).where(and(eq(dailyStats.userId, uid), eq(dailyStats.date, today)));
   return (
     row ?? {
       date: today,

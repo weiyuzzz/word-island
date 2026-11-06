@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { explorationEvents, inventory, wordProgress, words } from "@/db/schema";
+import { createUserAccount } from "../auth";
 import { ensureSeeded, resetSeededFlagForTest } from "../player";
+import { __setUserForTest } from "../session";
 import { finishExploration, getMapState, resolveEvent, startExploration } from "../exploration";
 import { buyItem, claimQuest, getQuestViews, getShopState } from "../quests";
 import { getGarden } from "../garden";
@@ -12,14 +14,17 @@ import type { EventPayload } from "@/lib/game/model";
 async function resetDb() {
   // 测试库可能还没有表（首次运行），先建表再清空
   await ensureSeeded();
-  await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players, explorations, exploration_events, player_quests, inventory, purchases, region_progress restart identity cascade`);
+  await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players, explorations, exploration_events, player_quests, inventory, purchases, region_progress, sessions, users restart identity cascade`);
   resetSeededFlagForTest();
+  __setUserForTest(null);
 }
 
 describe("探索 / 战斗 / 任务 / 花园 闭环", () => {
   beforeAll(async () => {
     await resetDb();
     await ensureSeeded();
+    const user = await createUserAccount("tester", "test123456");
+    __setUserForTest(user.id);
     // 给玩家足够金币用于商店测试
     await db.execute(sql`update players set coins = 5000, xp = 1200`);
   });

@@ -16,6 +16,7 @@ import type {
 } from "@/lib/types";
 import { blankSentence, dateKey, normalizeWord, pickRandom, shuffle } from "@/lib/utils";
 import { bumpDaily, ensureSeeded, lockPlayer, nextStreak, snapshot } from "./player";
+import { currentUserId } from "./session";
 import { checkAchievements, getDailyTasks } from "./tasks";
 
 type WordRow = typeof words.$inferSelect;
@@ -114,13 +115,14 @@ export interface CreateSessionInput {
 
 export async function createSession(input: CreateSessionInput): Promise<ClientSession> {
   await ensureSeeded();
+  const uid = await currentUserId();
   const size = Math.min(30, Math.max(5, Math.round(input.size || 10)));
   const now = new Date();
-  const deckFilter = input.deckId ? eq(words.deckId, input.deckId) : undefined;
+  const deckFilter = input.deckId ? and(eq(words.deckId, input.deckId), eq(words.userId, uid)) : eq(words.userId, uid);
 
   let deckName = "全部词库";
   if (input.deckId) {
-    const [deck] = await db.select().from(decks).where(eq(decks.id, input.deckId));
+    const [deck] = await db.select().from(decks).where(and(eq(decks.id, input.deckId), eq(decks.userId, uid)));
     if (!deck) throw new Error("词库不存在");
     deckName = deck.name;
   }
@@ -185,20 +187,19 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
 
   selected = shuffle(selected);
 
-  const localPool = await db
+  // 干扰项只从当前用户自己的词库中取，避免跨账号泄露
+  const pool = await db
     .select()
     .from(words)
-    .where(deckFilter)
+    .where(eq(words.userId, uid))
     .orderBy(sql`random()`)
     .limit(80);
-  const globalPool = localPool.length < 12 ? await db.select().from(words).orderBy(sql`random()`).limit(60) : [];
-  const pool = [...localPool, ...globalPool];
 
   const questions = selected.map((s) => buildQuestion(s.w, s.status, pool, input.kind === "dictation" ? "dictation" : undefined));
 
   const [session] = await db
     .insert(studySessions)
-    .values({ deckId: input.deckId, deckName, kind: input.kind, questions, total: questions.length })
+    .values({ userId: uid, deckId: input.deckId, deckName, kind: input.kind, questions, total: questions.length })
     .returning();
 
   const wordMap = new Map(selected.map((s) => [s.w.id, s.w]));
@@ -226,8 +227,9 @@ function isCorrect(q: QuestionRecord, answer: string): boolean {
 
 export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResult> {
   const now = new Date();
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const [session] = await tx.select().from(studySessions).where(eq(studySessions.id, input.sessionId)).for("update");
+    const [session] = await tx.select().from(studySessions).where(and(eq(studySessions.id, input.sessionId), eq(studySessions.userId, uid))).for("update");
     if (!session) throw new Error("学习会话不存在");
     if (session.finishedAt) throw new Error("该学习会话已结束");
     const q = session.questions[input.index];
@@ -267,6 +269,7 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
     await tx
       .insert(wordProgress)
       .values({
+        userId: uid,
         wordId: q.wordId,
         status: next.status,
         proficiency: next.proficiency,
@@ -297,7 +300,7 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
         },
       });
 
-    await tx.insert(reviewLogs).values({ wordId: q.wordId, sessionId: session.id, mode: q.mode, correct, quality, responseMs });
+    await tx.insert(reviewLogs).values({ userId: uid, wordId: q.wordId, sessionId: session.id, mode: q.mode, correct, quality, responseMs });
 
     const sessionStreak = correct ? session.currentStreak + 1 : 0;
     const isReview = prev.status === "review" || prev.status === "mastered";
@@ -318,7 +321,7 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
       })
       .where(eq(studySessions.id, session.id));
 
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
     const today = dateKey(now);
     const streakInfo = nextStreak(player, today);
     const [updated] = await tx
@@ -335,7 +338,7 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
       .where(eq(players.id, player.id))
       .returning();
 
-    await bumpDaily(tx, today, {
+    await bumpDaily(tx, uid, today, {
       newLearned: q.isNew ? 1 : 0,
       reviewed: q.isNew ? 0 : 1,
       correct: correct ? 1 : 0,
@@ -364,19 +367,20 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
 }
 
 export async function finishSession(sessionId: number): Promise<SessionSummary> {
+  const uid = await currentUserId();
   return db.transaction(async (tx) => {
-    const [session] = await tx.select().from(studySessions).where(eq(studySessions.id, sessionId)).for("update");
+    const [session] = await tx.select().from(studySessions).where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, uid))).for("update");
     if (!session) throw new Error("学习会话不存在");
 
     const wrongIds = session.questions.filter((q) => q.answered && q.wasCorrect === false).map((q) => q.wordId);
     const wrongRows = wrongIds.length ? await tx.select({ id: words.id, word: words.word, meaning: words.meaning }).from(words).where(inArray(words.id, wrongIds)) : [];
     const wrongWords = wrongIds.map((id) => wrongRows.find((r) => r.id === id)).filter((r): r is NonNullable<typeof r> => Boolean(r));
 
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
     const today = dateKey();
 
     if (session.finishedAt) {
-      const tasks = await getDailyTasks(tx, player.dailyGoal, today);
+      const tasks = await getDailyTasks(tx, uid, player.dailyGoal, today);
       return {
         sessionId: session.id,
         total: session.total,
@@ -418,13 +422,13 @@ export async function finishSession(sessionId: number): Promise<SessionSummary> 
         .set({ coins: player.coins + bonus.coins, xp: player.xp + bonus.xp })
         .where(eq(players.id, player.id));
     }
-    await bumpDaily(tx, today, { sessionsCompleted: completed ? 1 : 0, coinsEarned: bonus.coins, xpEarned: bonus.xp });
+    await bumpDaily(tx, uid, today, { sessionsCompleted: completed ? 1 : 0, coinsEarned: bonus.coins, xpEarned: bonus.xp });
 
     const perfectSession = completed && session.total >= 10 && session.correct === session.total;
-    const newAchievements = await checkAchievements(tx, { perfectSession });
+    const newAchievements = await checkAchievements(tx, uid, { perfectSession });
 
     const [finalPlayer] = await tx.select().from(players).where(eq(players.id, player.id));
-    const tasks = await getDailyTasks(tx, finalPlayer.dailyGoal, today);
+    const tasks = await getDailyTasks(tx, uid, finalPlayer.dailyGoal, today);
 
     return {
       sessionId: session.id,
@@ -449,7 +453,8 @@ export async function finishSession(sessionId: number): Promise<SessionSummary> 
 
 export async function countDue(deckId: number | null = null): Promise<{ due: number; fresh: number }> {
   await ensureSeeded();
-  const deckFilter = deckId ? eq(words.deckId, deckId) : undefined;
+  const uid = await currentUserId();
+  const deckFilter = deckId ? and(eq(words.deckId, deckId), eq(words.userId, uid)) : eq(words.userId, uid);
   const [dueRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(words)

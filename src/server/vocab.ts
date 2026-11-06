@@ -5,9 +5,11 @@ import { parseImport, toCsv, toJson, type ImportFormat, type WordInput } from "@
 import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { normalizeWord } from "@/lib/utils";
 import { ensureSeeded } from "./player";
+import { currentUserId } from "./session";
 
 export async function listDecks(): Promise<DeckSummary[]> {
   await ensureSeeded();
+  const uid = await currentUserId();
   const rows = await db
     .select({
       id: decks.id,
@@ -26,6 +28,7 @@ export async function listDecks(): Promise<DeckSummary[]> {
     .from(decks)
     .leftJoin(words, eq(words.deckId, decks.id))
     .leftJoin(wordProgress, eq(wordProgress.wordId, words.id))
+    .where(eq(decks.userId, uid))
     .groupBy(decks.id)
     .orderBy(asc(decks.kind), asc(decks.id));
   return rows.map((r) => ({
@@ -54,23 +57,24 @@ export interface WordFilter {
 
 export async function getWords(filter: WordFilter): Promise<{ items: WordView[]; total: number }> {
   await ensureSeeded();
+  const uid = await currentUserId();
   const limit = Math.min(200, Math.max(1, filter.limit ?? 60));
   const offset = Math.max(0, filter.offset ?? 0);
-  const conditions = [];
+  const conditions = [eq(words.userId, uid)];
   if (filter.deckId) conditions.push(eq(words.deckId, filter.deckId));
   if (filter.q?.trim()) {
     const pattern = `%${filter.q.trim()}%`;
-    conditions.push(or(ilike(words.word, pattern), ilike(words.meaning, pattern)));
+    conditions.push(or(ilike(words.word, pattern), ilike(words.meaning, pattern))!);
   }
   if (filter.status && filter.status !== "all") {
     if (filter.status === "new") {
-      conditions.push(or(sql`${wordProgress.id} is null`, eq(wordProgress.status, "new")));
+      conditions.push(or(sql`${wordProgress.id} is null`, eq(wordProgress.status, "new"))!);
     } else {
       conditions.push(eq(wordProgress.status, filter.status));
     }
   }
   if (filter.wrongOnly) conditions.push(gt(wordProgress.wrongCount, 0));
-  const where = conditions.length ? and(...conditions) : undefined;
+  const where = and(...conditions);
 
   const [countRow] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -111,15 +115,17 @@ export async function getWords(filter: WordFilter): Promise<{ items: WordView[];
 }
 
 export async function createDeck(name: string, description = ""): Promise<{ id: number; name: string }> {
+  const uid = await currentUserId();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("请输入词库名称");
   if (trimmed.length > 40) throw new Error("词库名称请控制在 40 字以内");
-  const [deck] = await db.insert(decks).values({ name: trimmed, description: description.trim(), kind: "custom", color: "leaf" }).returning();
+  const [deck] = await db.insert(decks).values({ userId: uid, name: trimmed, description: description.trim(), kind: "custom", color: "leaf" }).returning();
   return { id: deck.id, name: deck.name };
 }
 
 export async function deleteDeck(id: number): Promise<void> {
-  const [deck] = await db.select().from(decks).where(eq(decks.id, id));
+  const uid = await currentUserId();
+  const [deck] = await db.select().from(decks).where(and(eq(decks.id, id), eq(decks.userId, uid)));
   if (!deck) throw new Error("词库不存在");
   if (deck.kind === "builtin") throw new Error("内置词库不能删除");
   await db.delete(decks).where(eq(decks.id, id));
@@ -141,13 +147,20 @@ function validateInput(input: WordInput): WordInput {
   };
 }
 
-export async function addWord(deckId: number, input: WordInput): Promise<number> {
-  const [deck] = await db.select().from(decks).where(eq(decks.id, deckId));
+/** 校验词库归属，返回词库行 */
+async function ownedDeck(deckId: number, uid: number) {
+  const [deck] = await db.select().from(decks).where(and(eq(decks.id, deckId), eq(decks.userId, uid)));
   if (!deck) throw new Error("词库不存在");
+  return deck;
+}
+
+export async function addWord(deckId: number, input: WordInput): Promise<number> {
+  const uid = await currentUserId();
+  await ownedDeck(deckId, uid);
   const clean = validateInput(input);
   const inserted = await db
     .insert(words)
-    .values({ ...clean, deckId, wordKey: normalizeWord(clean.word) })
+    .values({ userId: uid, ...clean, deckId, wordKey: normalizeWord(clean.word) })
     .onConflictDoNothing()
     .returning({ id: words.id });
   if (inserted.length === 0) throw new Error(`「${clean.word}」已经在这个词库中了`);
@@ -155,7 +168,8 @@ export async function addWord(deckId: number, input: WordInput): Promise<number>
 }
 
 export async function updateWord(id: number, input: WordInput): Promise<void> {
-  const [existing] = await db.select().from(words).where(eq(words.id, id));
+  const uid = await currentUserId();
+  const [existing] = await db.select().from(words).where(and(eq(words.id, id), eq(words.userId, uid)));
   if (!existing) throw new Error("单词不存在");
   const clean = validateInput(input);
   const key = normalizeWord(clean.word);
@@ -167,7 +181,8 @@ export async function updateWord(id: number, input: WordInput): Promise<void> {
 }
 
 export async function deleteWord(id: number): Promise<void> {
-  await db.delete(words).where(eq(words.id, id));
+  const uid = await currentUserId();
+  await db.delete(words).where(and(eq(words.id, id), eq(words.userId, uid)));
 }
 
 export interface ImportInput {
@@ -179,6 +194,7 @@ export interface ImportInput {
 
 /** 导入：跳过已存在的单词（保留其学习记录），分批写入 */
 export async function importWords(input: ImportInput): Promise<ImportResult> {
+  const uid = await currentUserId();
   const parsed = parseImport(input.text, input.format);
   if (parsed.items.length === 0 && parsed.issues.length > 0 && !input.deckId && !input.newDeckName) {
     return { deckId: 0, deckName: "", imported: 0, duplicates: 0, duplicatesInFile: parsed.duplicatesInFile, errors: parsed.issues };
@@ -189,11 +205,11 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
     if (!deckId) {
       const name = input.newDeckName?.trim();
       if (!name) throw new Error("请选择词库或输入新词库名称");
-      const [deck] = await tx.insert(decks).values({ name, kind: "custom", color: "leaf" }).returning();
+      const [deck] = await tx.insert(decks).values({ userId: uid, name, kind: "custom", color: "leaf" }).returning();
       deckId = deck.id;
       deckName = deck.name;
     } else {
-      const [deck] = await tx.select().from(decks).where(eq(decks.id, deckId));
+      const [deck] = await tx.select().from(decks).where(and(eq(decks.id, deckId), eq(decks.userId, uid)));
       if (!deck) throw new Error("词库不存在");
       deckName = deck.name;
     }
@@ -208,7 +224,7 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
         continue;
       }
       existingKeys.add(key);
-      toInsert.push({ ...item, deckId, wordKey: key });
+      toInsert.push({ userId: uid, ...item, deckId, wordKey: key });
     }
     for (let i = 0; i < toInsert.length; i += 200) {
       await tx.insert(words).values(toInsert.slice(i, i + 200)).onConflictDoNothing();
@@ -225,8 +241,8 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
 }
 
 export async function exportDeck(deckId: number, format: ImportFormat): Promise<{ filename: string; content: string; mime: string }> {
-  const [deck] = await db.select().from(decks).where(eq(decks.id, deckId));
-  if (!deck) throw new Error("词库不存在");
+  const uid = await currentUserId();
+  const deck = await ownedDeck(deckId, uid);
   const rows = await db.select().from(words).where(eq(words.deckId, deckId)).orderBy(asc(words.id));
   const items: WordInput[] = rows.map((r) => ({
     word: r.word,
@@ -246,8 +262,8 @@ export async function exportDeck(deckId: number, format: ImportFormat): Promise<
 
 /** 生成可分享的词库内容：带名称与版本标记的 JSON，对方可在「导入」时粘贴 */
 export async function shareDeck(deckId: number): Promise<{ name: string; content: string }> {
-  const [deck] = await db.select().from(decks).where(eq(decks.id, deckId));
-  if (!deck) throw new Error("词库不存在");
+  const uid = await currentUserId();
+  const deck = await ownedDeck(deckId, uid);
   const rows = await db.select().from(words).where(eq(words.deckId, deckId)).orderBy(asc(words.id));
   const items: WordInput[] = rows.map((r) => ({
     word: r.word,

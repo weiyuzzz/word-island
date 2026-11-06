@@ -71,6 +71,23 @@ export const schemas = {
   shareDeck: z.object({
     deckId: z.number().int().positive(),
   }),
+  login: z.object({
+    username: z.string().trim().min(1).max(20),
+    password: z.string().min(1).max(64),
+  }),
+  register: z.object({
+    username: z.string().trim().min(2).max(20),
+    password: z.string().min(6).max(64),
+  }),
+  adminCreateUser: z.object({
+    username: z.string().trim().min(2).max(20),
+    password: z.string().min(6).max(64),
+  }),
+  adminResetPassword: z.object({
+    userId: z.number().int().positive(),
+    password: z.string().min(6).max(64),
+  }),
+  adminDeleteUser: z.number().int().positive(),
 };
 
 export const gameSchemas = {

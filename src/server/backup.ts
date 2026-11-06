@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import type { ProgressBackup } from "@/lib/types";
 import type { WordInput } from "@/lib/vocab/parse";
 import { ensureSeeded } from "./player";
+import { currentUserId } from "./session";
 
 /**
  * 导出完整学习进度备份：玩家档案、全部词库及其单词、已解锁成就、每日统计。
@@ -11,10 +12,11 @@ import { ensureSeeded } from "./player";
  */
 export async function exportProgress(): Promise<{ filename: string; content: string; mime: string }> {
   await ensureSeeded();
-  const [player] = await db.select().from(players).orderBy(players.id).limit(1);
-  const deckRows = await db.select().from(decks).orderBy(asc(decks.id));
-  const achievementRows = await db.select().from(achievements).orderBy(asc(achievements.key));
-  const statRows = await db.select().from(dailyStats).orderBy(asc(dailyStats.date));
+  const uid = await currentUserId();
+  const [player] = await db.select().from(players).where(eq(players.userId, uid)).limit(1);
+  const deckRows = await db.select().from(decks).where(eq(decks.userId, uid)).orderBy(asc(decks.id));
+  const achievementRows = await db.select().from(achievements).where(eq(achievements.userId, uid)).orderBy(asc(achievements.key));
+  const statRows = await db.select().from(dailyStats).where(eq(dailyStats.userId, uid)).orderBy(asc(dailyStats.date));
 
   const decksPayload = await Promise.all(
     deckRows.map(async (d) => {

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
+import { getSessionUser } from "@/server/session";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,11 +23,12 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const user = await getSessionUser();
   return (
     <html lang="zh-CN">
       <body className="antialiased">
-        <AppShell>{children}</AppShell>
+        <AppShell user={user ? { username: user.username, role: user.role } : null}>{children}</AppShell>
       </body>
     </html>
   );

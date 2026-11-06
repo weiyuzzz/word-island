@@ -1,0 +1,31 @@
+# 树莓派一键部署：PostgreSQL 16 + 应用，数据落在命名卷里（建议把卷指向 USB/SSD 以减少 SD 卡损耗）
+# 用法：docker compose up -d --build
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      # 生产部署请改成强密码，并与下方 app 的 DATABASE_URL 保持一致
+      POSTGRES_PASSWORD: change-me-please
+      POSTGRES_DB: app_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:change-me-please@db:5432/app_db
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

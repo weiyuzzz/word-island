@@ -116,6 +116,7 @@ function DictationView({ target, typed, onType, attempt, stage, locked, pending,
   onCheck: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [wrongPing, setWrongPing] = useState(0);
 
   useEffect(() => {
     if (stage === "blind" || stage === "shadow") {
@@ -123,6 +124,31 @@ function DictationView({ target, typed, onType, attempt, stage, locked, pending,
       return () => clearTimeout(t);
     }
   }, [stage, attempt]);
+
+  // 跟拼阶段：只接受正确的字母，输错不前进（退格可用）
+  const handleType = (next: string) => {
+    if (stage !== "shadow") {
+      onType(next);
+      return;
+    }
+    if (next.length < typed.length) {
+      onType(next);
+      return;
+    }
+    let accepted = typed;
+    let rejected = false;
+    for (let i = typed.length; i < next.length; i += 1) {
+      const expected = target[accepted.length];
+      if (expected != null && next[i].toLowerCase() === expected.toLowerCase()) {
+        accepted += expected;
+      } else {
+        rejected = true;
+        break;
+      }
+    }
+    onType(accepted);
+    if (rejected) setWrongPing((n) => n + 1);
+  };
 
   const maxLen = Math.max(target.length, typed.length);
   const wordRowClass = "flex items-baseline justify-center gap-0 pb-2 font-mono text-3xl leading-none tracking-[0.25em] sm:text-4xl";
@@ -150,23 +176,27 @@ function DictationView({ target, typed, onType, attempt, stage, locked, pending,
         <div className="relative mx-auto max-w-2xl">
           <div aria-hidden className={cn(wordRowClass, "border-b-2 border-slate-200")}>
             {target.split("").map((c, i) => (
-              <span key={i} className={cn(i < typed.length ? (typed[i].toLowerCase() === c.toLowerCase() ? "text-ocean-600" : "text-coral-500") : "text-slate-300")}>{c}</span>
+              <span key={i} className={cn(i < typed.length ? "text-ocean-600" : "text-slate-300", i === typed.length && "border-b-2 border-ocean-400")}>{c}</span>
             ))}
-            <span className="ml-0.5 inline-block h-7 w-0.5 animate-pulse rounded bg-ocean-500 sm:h-8" />
           </div>
           <input
             ref={inputRef}
             value={typed}
-            onChange={(e) => onType(e.target.value)}
+            onChange={(e) => handleType(e.target.value)}
             disabled={locked}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
             aria-label="跟着阴影输入单词"
-            className="absolute inset-0 h-full w-full cursor-text bg-transparent text-center font-mono text-3xl tracking-[0.25em] text-transparent caret-ocean-500 outline-none sm:text-4xl"
+            className="absolute inset-0 h-full w-full cursor-text bg-transparent text-center font-mono text-3xl tracking-[0.25em] text-transparent caret-transparent outline-none sm:text-4xl"
           />
         </div>
+      )}
+      {stage === "shadow" && wrongPing > 0 && (
+        <p key={wrongPing} className="mt-2 animate-shake text-center text-xs font-medium text-coral-500">
+          字母不对，看阴影再试
+        </p>
       )}
 
       {stage === "checked" && (
@@ -544,6 +574,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
         {q.mode === "dictation" ? (
           <DictationView
+            key={dictAttempt}
             target={q.word ?? ""}
             typed={dictTyped}
             onType={setDictTyped}

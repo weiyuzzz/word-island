@@ -6,29 +6,32 @@ import type { DashboardData, DailyStatPoint, StatsData, WeakWord, WordStatus } f
 import { dateKey, shiftDateKey, shortDateLabel } from "@/lib/utils";
 import { islandProgress } from "./island";
 import { bumpDaily, effectiveStreak, ensureSeeded, getPlayer, getTodayStats, lockPlayer, snapshot } from "./player";
+import { currentUserId } from "./session";
 import { getDailyTasks, listAchievements } from "./tasks";
 
 export async function getDashboard(): Promise<DashboardData> {
   await ensureSeeded();
-  const player = await getPlayer();
+  const uid = await currentUserId();
+  const player = await getPlayer(db, uid);
   const today = dateKey();
-  const todayStats = await getTodayStats(db, today);
+  const todayStats = await getTodayStats(db, uid, today);
   const now = new Date();
 
   const [dueRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(wordProgress)
-    .where(and(ne(wordProgress.status, "new"), lte(wordProgress.nextReviewAt, now)));
+    .where(and(eq(wordProgress.userId, uid), ne(wordProgress.status, "new"), lte(wordProgress.nextReviewAt, now)));
   const [progressRow] = await db
     .select({
       learned: sql<number>`count(*) filter (where ${wordProgress.status} <> 'new')::int`,
       mastered: sql<number>`count(*) filter (where ${wordProgress.status} = 'mastered')::int`,
     })
-    .from(wordProgress);
-  const [wordsRow] = await db.select({ count: sql<number>`count(*)::int` }).from(words);
-  const buildingRows = await db.select().from(buildings);
-  const tasks = await getDailyTasks(db, player.dailyGoal, today);
-  const achievements = await listAchievements(db);
+    .from(wordProgress)
+    .where(eq(wordProgress.userId, uid));
+  const [wordsRow] = await db.select({ count: sql<number>`count(*)::int` }).from(words).where(eq(words.userId, uid));
+  const buildingRows = await db.select().from(buildings).where(eq(buildings.userId, uid));
+  const tasks = await getDailyTasks(db, uid, player.dailyGoal, today);
+  const achievements = await listAchievements(db, uid);
   const deckRows = await db
     .select({
       id: decks.id,
@@ -41,6 +44,7 @@ export async function getDashboard(): Promise<DashboardData> {
     .from(decks)
     .leftJoin(words, eq(words.deckId, decks.id))
     .leftJoin(wordProgress, eq(wordProgress.wordId, words.id))
+    .where(eq(decks.userId, uid))
     .groupBy(decks.id)
     .orderBy(asc(decks.kind), asc(decks.id));
 
@@ -74,23 +78,25 @@ export async function getDashboard(): Promise<DashboardData> {
 }
 
 export async function claimLoginReward() {
+  const uid = await currentUserId();
   const today = dateKey();
   return db.transaction(async (tx) => {
-    const player = await lockPlayer(tx);
+    const player = await lockPlayer(tx, uid);
     if (player.lastLoginRewardDate === today) throw new Error("今天的登录奖励已经领取过了");
     const [updated] = await tx
       .update(players)
       .set({ coins: player.coins + LOGIN_REWARD.coins, xp: player.xp + LOGIN_REWARD.xp, lastLoginRewardDate: today })
       .where(eq(players.id, player.id))
       .returning();
-    await bumpDaily(tx, today, { coinsEarned: LOGIN_REWARD.coins, xpEarned: LOGIN_REWARD.xp });
+    await bumpDaily(tx, uid, today, { coinsEarned: LOGIN_REWARD.coins, xpEarned: LOGIN_REWARD.xp });
     return { player: snapshot(updated), reward: LOGIN_REWARD, leveledUp: levelFromXp(updated.xp).level > levelFromXp(player.xp).level };
   });
 }
 
 export async function updateDailyGoal(goal: number) {
+  const uid = await currentUserId();
   const value = Math.min(200, Math.max(10, Math.round(goal)));
-  const player = await getPlayer();
+  const player = await getPlayer(db, uid);
   await db.update(players).set({ dailyGoal: value }).where(eq(players.id, player.id));
   return value;
 }
@@ -108,10 +114,11 @@ function summarize(points: DailyStatPoint[]) {
 
 export async function getStats(): Promise<StatsData> {
   await ensureSeeded();
-  const player = await getPlayer();
+  const uid = await currentUserId();
+  const player = await getPlayer(db, uid);
   const today = dateKey();
   const start = shiftDateKey(today, -29);
-  const rows = await db.select().from(dailyStats).where(gte(dailyStats.date, start)).orderBy(asc(dailyStats.date));
+  const rows = await db.select().from(dailyStats).where(and(eq(dailyStats.userId, uid), gte(dailyStats.date, start))).orderBy(asc(dailyStats.date));
   const map = new Map(rows.map((r) => [r.date, r]));
   const series: DailyStatPoint[] = [];
   const heatmap: DailyStatPoint[] = [];
@@ -135,8 +142,9 @@ export async function getStats(): Promise<StatsData> {
   const statusRows = await db
     .select({ status: wordProgress.status, count: sql<number>`count(*)::int` })
     .from(wordProgress)
+    .where(eq(wordProgress.userId, uid))
     .groupBy(wordProgress.status);
-  const [wordsRow] = await db.select({ count: sql<number>`count(*)::int` }).from(words);
+  const [wordsRow] = await db.select({ count: sql<number>`count(*)::int` }).from(words).where(eq(words.userId, uid));
   const statusCounts: Record<WordStatus, number> = { new: 0, learning: 0, review: 0, mastered: 0 };
   for (const r of statusRows) statusCounts[r.status as WordStatus] = r.count;
   const totalWords = wordsRow?.count ?? 0;
@@ -149,8 +157,9 @@ export async function getStats(): Promise<StatsData> {
       dueNow: sql<number>`count(*) filter (where ${wordProgress.status} <> 'new' and ${wordProgress.nextReviewAt} <= ${now.toISOString()}::timestamptz)::int`,
       upcoming: sql<number>`count(*) filter (where ${wordProgress.status} <> 'new' and ${wordProgress.nextReviewAt} > ${now.toISOString()}::timestamptz and ${wordProgress.nextReviewAt} <= ${in24h.toISOString()}::timestamptz)::int`,
     })
-    .from(wordProgress);
-  const [activeRow] = await db.select({ count: sql<number>`count(*)::int` }).from(dailyStats).where(sql`${dailyStats.total} > 0`);
+    .from(wordProgress)
+    .where(eq(wordProgress.userId, uid));
+  const [activeRow] = await db.select({ count: sql<number>`count(*)::int` }).from(dailyStats).where(and(eq(dailyStats.userId, uid), sql`${dailyStats.total} > 0`));
   const todayStats = series[series.length - 1];
 
   const weakRows = await db
@@ -165,7 +174,7 @@ export async function getStats(): Promise<StatsData> {
     })
     .from(words)
     .innerJoin(wordProgress, eq(wordProgress.wordId, words.id))
-    .where(ne(wordProgress.status, "new"))
+    .where(and(eq(words.userId, uid), ne(wordProgress.status, "new")))
     .orderBy(desc(wordProgress.wrongCount), asc(wordProgress.proficiency))
     .limit(12);
   const weakWords: WeakWord[] = weakRows.map((r) => ({

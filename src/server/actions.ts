@@ -8,6 +8,15 @@ import { createSession, finishSession, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
 import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, shareDeck, updateWord } from "./vocab";
 import { exportProgress } from "./backup";
+import {
+  adminCreateUser,
+  adminDeleteUser,
+  adminResetPassword,
+  listUsersForAdmin,
+  loginUser,
+  registerAndLogin,
+} from "./auth";
+import { destroySession } from "./session";
 import { sanitizeError, schemas } from "./validate";
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -135,4 +144,46 @@ export async function shareDeckAction(deckId: number) {
 
 export async function exportProgressAction() {
   return run(() => exportProgress());
+}
+
+// ---------- 账号 ----------
+
+export async function loginAction(input: { username: string; password: string }) {
+  const parsed = schemas.login.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => loginUser(parsed.data.username, parsed.data.password));
+}
+
+export async function registerAction(input: { username: string; password: string }) {
+  const parsed = schemas.register.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => registerAndLogin(parsed.data.username, parsed.data.password));
+}
+
+export async function logoutAction() {
+  return run(() => destroySession());
+}
+
+// ---------- 后台管理 ----------
+
+export async function adminCreateUserAction(input: { username: string; password: string }) {
+  const parsed = schemas.adminCreateUser.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => adminCreateUser(parsed.data.username, parsed.data.password));
+}
+
+export async function adminResetPasswordAction(userId: number, password: string) {
+  const parsed = schemas.adminResetPassword.safeParse({ userId, password });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => adminResetPassword(parsed.data.userId, parsed.data.password));
+}
+
+export async function adminDeleteUserAction(userId: number) {
+  const parsed = schemas.adminDeleteUser.safeParse(userId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => adminDeleteUser(parsed.data));
+}
+
+export async function listUsersForAdminAction() {
+  return run(() => listUsersForAdmin());
 }
