@@ -50,9 +50,9 @@ function toState(p: ProgressRow | undefined): ProgressState {
   };
 }
 
-function buildQuestion(word: WordRow, status: WordStatus, pool: WordRow[]): QuestionRecord {
+function buildQuestion(word: WordRow, status: WordStatus, pool: WordRow[], forceMode?: QuizMode): QuestionRecord {
   const blank = word.example ? blankSentence(word.word, word.example) : null;
-  let mode = chooseMode(status, Boolean(blank));
+  let mode = forceMode ?? chooseMode(status, Boolean(blank));
   const others = pool.filter((p) => p.id !== word.id);
 
   const meaningDistractors = Array.from(
@@ -83,7 +83,7 @@ function buildQuestion(word: WordRow, status: WordStatus, pool: WordRow[]): Ques
       wasCorrect: null,
     };
   }
-  return { wordId: word.id, mode: "spelling", options: [], correct: word.word, prompt: blank?.blanked ?? null, isNew: status === "new", answered: false, wasCorrect: null };
+  return { wordId: word.id, mode, options: [], correct: word.word, prompt: blank?.blanked ?? null, isNew: status === "new", answered: false, wasCorrect: null };
 }
 
 function toClientQuestion(q: QuestionRecord, w: WordRow, index: number): ClientQuestion {
@@ -97,6 +97,9 @@ function toClientQuestion(q: QuestionRecord, w: WordRow, index: number): ClientQ
       return { ...base, prompt: q.prompt, meaning: w.meaning, pos: w.pos, options: q.options };
     case "spelling":
       return { ...base, meaning: w.meaning, pos: w.pos, prompt: q.prompt, length: w.word.length, firstLetter: w.word[0] };
+    case "dictation":
+      // 纯拼写：客户端需要单词本身做逐字母校验（单词反正会朗读出来，不额外泄露答案）
+      return { ...base, word: w.word, phonetic: w.phonetic, length: w.word.length };
     default:
       return base;
   }
@@ -190,7 +193,7 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
   const globalPool = localPool.length < 12 ? await db.select().from(words).orderBy(sql`random()`).limit(60) : [];
   const pool = [...localPool, ...globalPool];
 
-  const questions = selected.map((s) => buildQuestion(s.w, s.status, pool));
+  const questions = selected.map((s) => buildQuestion(s.w, s.status, pool, input.kind === "dictation" ? "dictation" : undefined));
 
   const [session] = await db
     .insert(studySessions)

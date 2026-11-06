@@ -101,11 +101,17 @@ export const STATUS_TONE: Record<string, Tone> = { new: "slate", learning: "sun"
 export function Modal({ open, onClose, title, children, footer, size = "md" }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; footer?: ReactNode; size?: "md" | "lg" }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // 用 ref 保存 onClose：调用方常传内联函数，若放入依赖会让下方 effect 在
+  // 父组件每次重渲染（例如输入框每敲一个字）时重新执行，把焦点抢回弹窗
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Escape") { onCloseRef.current(); return; }
       if (e.key === "Tab") {
         const container = dialogRef.current;
         if (!container) return;
@@ -127,21 +133,21 @@ export function Modal({ open, onClose, title, children, footer, size = "md" }: {
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     previousFocus.current = document.activeElement as HTMLElement;
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    focusable?.[0]?.focus();
+    // 初始焦点优先给输入框（方便直接打字），其次弹窗本身，避免聚焦到右上角关闭按钮
+    const input = dialogRef.current?.querySelector<HTMLElement>("input, textarea, select");
+    if (input) input.focus();
+    else dialogRef.current?.focus();
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
       previousFocus.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-ink/30 backdrop-blur-[2px]" onClick={onClose} />
-      <div ref={dialogRef} className={cn("relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-lift animate-fade-up sm:m-4 sm:rounded-3xl", size === "lg" ? "sm:max-w-2xl" : "sm:max-w-lg")}>
+      <div ref={dialogRef} tabIndex={-1} className={cn("relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-lift outline-none animate-fade-up sm:m-4 sm:rounded-3xl", size === "lg" ? "sm:max-w-2xl" : "sm:max-w-lg")}>
         <div className="flex items-center justify-between px-5 pt-4 pb-2 sm:px-6">
           <div className="text-base font-semibold">{title}</div>
           <button onClick={onClose} aria-label="关闭" className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100">

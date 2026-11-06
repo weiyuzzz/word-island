@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { explorationEvents, inventory, wordProgress, words } from "@/db/schema";
-import { ensureSeeded } from "../player";
+import { ensureSeeded, resetSeededFlagForTest } from "../player";
 import { finishExploration, getMapState, resolveEvent, startExploration } from "../exploration";
 import { buyItem, claimQuest, getQuestViews, getShopState } from "../quests";
 import { getGarden } from "../garden";
@@ -10,7 +10,10 @@ import { getWords } from "../vocab";
 import type { EventPayload } from "@/lib/game/model";
 
 async function resetDb() {
+  // 测试库可能还没有表（首次运行），先建表再清空
+  await ensureSeeded();
   await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players, explorations, exploration_events, player_quests, inventory, purchases, region_progress restart identity cascade`);
+  resetSeededFlagForTest();
 }
 
 describe("探索 / 战斗 / 任务 / 花园 闭环", () => {

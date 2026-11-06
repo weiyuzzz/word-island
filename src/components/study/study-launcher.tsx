@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { BookOpen, Brain, Check, Play, Shuffle, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Check, Keyboard, Play, Shuffle, Sparkles } from "lucide-react";
 import type { ClientSession, DeckSummary, SessionKind } from "@/lib/types";
 import { SESSION_SIZES } from "@/lib/game/economy";
 import { MODE_META } from "@/lib/game/srs";
@@ -22,6 +22,7 @@ const KINDS: { key: SessionKind; title: string; desc: string; icon: typeof Shuff
   { key: "mixed", title: "混合练习", desc: "待复习 + 新词，智能搭配（推荐）", icon: Shuffle },
   { key: "review", title: "只复习", desc: "巩固到期的单词", icon: Brain },
   { key: "new", title: "只学新词", desc: "认识新的单词", icon: Sparkles },
+  { key: "dictation", title: "纯拼写", desc: "听发音逐字母拼写（听写模式）", icon: Keyboard },
 ];
 
 export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Props) {
@@ -74,7 +75,7 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
 
       <section>
         <div className="mb-2 text-sm font-semibold text-slate-600">学习方式</div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {KINDS.map((k) => {
             const active = kind === k.key;
             const count = k.key === "review" ? due : k.key === "new" ? fresh : null;

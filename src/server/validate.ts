@@ -10,7 +10,7 @@ const WORD_INPUT = z.object({
   difficulty: z.number().int().min(1).max(5),
 });
 
-const SESSION_KIND = z.enum(["mixed", "review", "new"]);
+const SESSION_KIND = z.enum(["mixed", "review", "new", "dictation"]);
 const WORD_STATUS = z.enum(["new", "learning", "review", "mastered"]);
 const IMPORT_FORMAT = z.enum(["csv", "json"]);
 

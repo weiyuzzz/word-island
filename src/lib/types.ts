@@ -1,8 +1,8 @@
 import type { WordInput } from "@/lib/vocab/parse";
 
 export type WordStatus = "new" | "learning" | "review" | "mastered";
-export type QuizMode = "en2zh" | "zh2en" | "spelling" | "context" | "listen" | "synonym" | "antonym" | "sentence";
-export type SessionKind = "mixed" | "review" | "new";
+export type QuizMode = "en2zh" | "zh2en" | "spelling" | "context" | "listen" | "synonym" | "antonym" | "sentence" | "dictation";
+export type SessionKind = "mixed" | "review" | "new" | "dictation";
 
 /** 存在数据库里的题目记录（包含正确答案，不会原样发给客户端） */
 export interface QuestionRecord {

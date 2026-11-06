@@ -29,6 +29,14 @@ function HighlightedExample({ word, example }: { word: string; example: string }
 }
 
 function Prompt({ q }: { q: ClientQuestion }) {
+  if (q.mode === "dictation") {
+    return (
+      <div className="text-center">
+        <p className="text-sm font-medium text-slate-500">听发音，在下方格子中拼出这个单词</p>
+        <p className="mt-1 text-xs text-slate-400">听不清可以点击喇叭重听 · 答错的字母不会前进</p>
+      </div>
+    );
+  }
   if (q.mode === "en2zh") {
     return (
       <div className="text-center">
@@ -87,6 +95,125 @@ function Prompt({ q }: { q: ClientQuestion }) {
   );
 }
 
+/** 纯拼写（听写）：逐字母输入，正确前进、错误抖动不动，全部拼对自动提交 */
+function DictationArea({ q, disabled, usedHint, onUseHint, onSubmit }: { q: ClientQuestion; disabled: boolean; usedHint: boolean; onUseHint: () => void; onSubmit: (answer: string) => void }) {
+  const target = q.word ?? "";
+  const [confirmed, setConfirmed] = useState(0);
+  const [wrongPing, setWrongPing] = useState(0);
+  const [done, setDone] = useState(false);
+  const confirmedRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submittedRef = useRef(false);
+
+  const isLetterChar = (c: string) => /[a-z0-9]/i.test(c);
+  // 跳过单词中的分隔符（空格 / 连字符 / 撇号等），这些字符自动点亮
+  const skipSeparators = (k: number) => {
+    let next = k;
+    while (next < target.length && !isLetterChar(target[next])) next += 1;
+    return next;
+  };
+
+  useEffect(() => {
+    confirmedRef.current = skipSeparators(0);
+    setConfirmed(confirmedRef.current);
+    submittedRef.current = false;
+    setDone(false);
+    const t = setTimeout(() => inputRef.current?.focus(), 80);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  const commit = (k: number) => {
+    confirmedRef.current = k;
+    setConfirmed(k);
+    if (k >= target.length && !submittedRef.current) {
+      submittedRef.current = true;
+      setDone(true);
+      onSubmit(target);
+    }
+  };
+
+  const handleInput = (raw: string) => {
+    if (disabled || submittedRef.current || !target) return;
+    for (const ch of raw) {
+      if (!ch.trim()) continue;
+      const k = skipSeparators(confirmedRef.current);
+      if (k >= target.length) break;
+      if (target[k].toLowerCase() === ch.toLowerCase()) {
+        commit(skipSeparators(k + 1));
+      } else {
+        setWrongPing((n) => n + 1);
+      }
+    }
+  };
+
+  const useHintLetter = () => {
+    if (disabled || submittedRef.current) return;
+    const k = skipSeparators(confirmedRef.current);
+    if (k >= target.length) return;
+    onUseHint();
+    commit(skipSeparators(k + 1));
+  };
+
+  const remaining = target.length - confirmed;
+
+  return (
+    <div className="mt-6">
+      <div className="relative">
+        <div className="flex flex-wrap justify-center gap-1.5">
+          {target.split("").map((c, i) => {
+            const filled = i < confirmed;
+            const active = i === confirmed && !done;
+            return (
+              <span
+                key={i}
+                className={cn(
+                  "grid h-11 w-8 place-items-center rounded-xl border-2 font-mono text-lg font-bold uppercase transition-all sm:h-12 sm:w-9",
+                  target.length > 12 && "h-10 w-7 text-base sm:w-8",
+                  filled ? "border-ocean-500 bg-ocean-500 text-white shadow-sm" : "border-slate-200 bg-slate-100/80 text-transparent",
+                  active && "border-ocean-400 bg-white ring-2 ring-ocean-200",
+                )}
+              >
+                {filled ? c : "·"}
+              </span>
+            );
+          })}
+        </div>
+        <input
+          ref={inputRef}
+          defaultValue=""
+          onChange={(e) => {
+            const v = e.target.value;
+            e.target.value = "";
+            handleInput(v);
+          }}
+          disabled={disabled}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          aria-label="逐字母输入听写答案"
+          className="absolute inset-0 h-full w-full cursor-text opacity-0"
+        />
+      </div>
+      {wrongPing > 0 && remaining > 0 && (
+        <p key={wrongPing} className="mt-2 animate-shake text-center text-xs font-medium text-coral-500">
+          第 {confirmed + 1} 个字母不对，再听听
+        </p>
+      )}
+      <div className="mt-4 flex items-center justify-center gap-2">
+        <SpeakButton text={target} />
+        <button type="button" onClick={useHintLetter} disabled={usedHint || disabled} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+          <Lightbulb className="h-4 w-4" /> 提示下一个字母（奖励减少）
+        </button>
+        <span className="text-xs text-slate-400">
+          {confirmed}/{target.length}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function QuizSession({ session, onExit, onRestart }: Props) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -110,7 +237,11 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   useEffect(() => {
     startRef.current = Date.now();
     if (q?.mode === "spelling") setTimeout(() => inputRef.current?.focus(), 50);
-  }, [index, q?.mode]);
+    if (q?.mode === "dictation") {
+      const t = setTimeout(() => speak(q.word ?? ""), 250);
+      return () => clearTimeout(t);
+    }
+  }, [index, q?.mode, q?.word]);
 
   const submit = useCallback(
     (answer: string) => {
@@ -146,8 +277,10 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     });
   }, [session.id, toast]);
 
+  const nextLockRef = useRef(false);
   const next = useCallback(() => {
-    if (phase !== "feedback") return;
+    if (phase !== "feedback" || nextLockRef.current) return;
+    nextLockRef.current = true;
     if (index + 1 >= total) return finish();
     // 进入下一题时显式复位答题态（原先只在 effect 里清空答案，phase 一直停在 feedback）
     setChosen(null);
@@ -156,7 +289,17 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     setResult(null);
     setPhase("answering");
     setIndex((i) => i + 1);
+    setTimeout(() => {
+      nextLockRef.current = false;
+    }, 100);
   }, [phase, index, total, finish]);
+
+  // 答对（或重复作答）后短暂展示反馈即自动进入下一题，不再手动点「继续」；答错保留完整反馈供复习
+  useEffect(() => {
+    if (phase !== "feedback" || !result || (!result.correct && !result.alreadyAnswered)) return;
+    const t = setTimeout(next, 1100);
+    return () => clearTimeout(t);
+  }, [phase, result, next]);
 
   const exit = () => {
     if (earned.answered === 0) return onExit();
@@ -313,7 +456,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
           <X className="h-5 w-5" />
         </button>
         <div className="flex-1">
-          <ProgressBar value={index + (phase === "feedback" ? 1 : 0)} max={total} height="h-3" barClassName="bg-leaf-500" />
+          <ProgressBar value={Math.min(total, index + 1)} max={total} height="h-3" barClassName="bg-leaf-500" />
         </div>
         <div className="flex shrink-0 items-center gap-2 text-sm">
           <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-semibold", sessionStreak >= 3 ? "bg-coral-100 text-coral-600" : "bg-white text-slate-500 shadow-soft")}>
@@ -339,7 +482,9 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
       <Card key={index} className="mt-3 p-6 md:p-8 animate-fade-up">
         <Prompt q={q} />
 
-        {q.options ? (
+        {q.mode === "dictation" ? (
+          <DictationArea q={q} disabled={phase !== "answering" || pending} usedHint={usedHint} onUseHint={() => setUsedHint(true)} onSubmit={(answer) => submit(answer)} />
+        ) : q.options ? (
           <div className="mt-6 grid gap-2.5 sm:grid-cols-2">
             {q.options.map((opt, i) => {
               const isChosen = chosen === opt;
@@ -407,8 +552,36 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         )}
       </Card>
 
-      {/* Feedback */}
-      {phase === "feedback" && result && (
+      {/* Feedback：答对只显示一行简要反馈并自动进入下一题；答错显示完整卡片供巩固记忆 */}
+      {phase === "feedback" && result && (result.correct || result.alreadyAnswered) && (
+        <div className="mt-3 animate-fade-up">
+          <Card className={cn("flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-2 px-5 py-3", result.correct ? "border-leaf-200 bg-leaf-50/60" : "border-slate-100")}>
+            <span className="inline-flex items-center gap-2 text-sm font-semibold text-leaf-700">
+              {result.correct ? <Check className="h-5 w-5" /> : <X className="h-5 w-5" />}
+              {result.alreadyAnswered ? "这道题已经作答过" : result.quality === 1 ? "答对了（稍有犹豫）" : "回答正确！"}
+            </span>
+            <span className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="truncate font-semibold">{result.word.word}</span>
+              <span className="hidden truncate text-slate-500 sm:inline">{result.word.meaning}</span>
+              {!result.alreadyAnswered && (
+                <>
+                  {result.reward.coins + result.reward.streakBonus > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5">
+                      <CoinIcon className="h-3.5 w-3.5" /> +{result.reward.coins + result.reward.streakBonus}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5">
+                    <Zap className="h-3.5 w-3.5" /> +{result.reward.xp}
+                  </span>
+                  {result.reward.streakBonus > 0 && <span className="rounded-full bg-sun-400 px-2 py-0.5 text-xs text-ink">连击！</span>}
+                </>
+              )}
+            </span>
+          </Card>
+          <p className="mt-2 text-center text-xs text-slate-400">正在进入下一题…</p>
+        </div>
+      )}
+      {phase === "feedback" && result && !result.correct && !result.alreadyAnswered && (
         <div className="mt-3 animate-fade-up">
           <Card className={cn("overflow-hidden border-2", result.correct ? "border-leaf-200" : "border-coral-100")}>
             <div className={cn("flex items-center justify-between px-5 py-3 text-sm font-semibold", result.correct ? "bg-leaf-50 text-leaf-700" : "bg-coral-100/60 text-coral-600")}>

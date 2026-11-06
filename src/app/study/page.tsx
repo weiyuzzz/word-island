@@ -11,7 +11,7 @@ export default async function StudyPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const deckParam = typeof params.deck === "string" ? Number(params.deck) : NaN;
   const kindParam = typeof params.kind === "string" ? params.kind : "mixed";
-  const kind: SessionKind = kindParam === "review" || kindParam === "new" ? kindParam : "mixed";
+  const kind: SessionKind = kindParam === "review" || kindParam === "new" || kindParam === "dictation" ? kindParam : "mixed";
 
   const [decks, totals] = await Promise.all([listDecks(), countDue(null)]);
   const initialDeckId = Number.isFinite(deckParam) && decks.some((d) => d.id === deckParam) ? deckParam : null;

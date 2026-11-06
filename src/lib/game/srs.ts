@@ -31,6 +31,7 @@ export const MODE_WEIGHT: Record<QuizMode, number> = {
   synonym: 1.4,
   antonym: 1.4,
   sentence: 1.5,
+  dictation: 1.6,
 };
 
 export const MODE_META: Record<QuizMode, { label: string; short: string; description: string }> = {
@@ -42,6 +43,7 @@ export const MODE_META: Record<QuizMode, { label: string; short: string; descrip
   synonym: { label: "同义词辨析", short: "同义", description: "选择与单词意思最接近的表达" },
   antonym: { label: "反义词匹配", short: "反义", description: "选择单词的反义词" },
   sentence: { label: "句子构建", short: "构句", description: "选择在句中正确的单词形式" },
+  dictation: { label: "纯拼写", short: "听拼", description: "听发音，逐字母拼出整个单词" },
 };
 
 /** 超过该用时视为“犹豫” */
@@ -54,6 +56,7 @@ export const HESITATION_MS: Record<QuizMode, number> = {
   synonym: 12000,
   antonym: 12000,
   sentence: 18000,
+  dictation: 30000,
 };
 
 const MIN = 1;

@@ -22,6 +22,7 @@ export const ATTACK: Record<QuizMode, { label: string; damage: number }> = {
   synonym: { label: "技能攻击", damage: 26 },
   antonym: { label: "技能攻击", damage: 24 },
   sentence: { label: "特殊攻击", damage: 22 },
+  dictation: { label: "听写攻击", damage: 32 },
 };
 
 function uniqueDistractors<T>(candidates: T[], count: number, exclude: (v: T) => boolean, rng: () => number): T[] {
@@ -142,6 +143,10 @@ export function buildChallenge(
     }
     case "spelling": {
       return { ...base, mode: "spelling", prompt: blank?.blanked ?? null, correct: word.word };
+    }
+    case "dictation": {
+      // 纯拼写（听写）：只给发音，不给释义与例句
+      return { ...base, mode: "dictation", options: [], prompt: null, correct: word.word };
     }
     case "zh2en": {
       const words = uniqueDistractors(others.map((o) => o.word), 3, (m) => normalizeWord(m) === normalizeWord(word.word), rng);

@@ -227,6 +227,11 @@ export async function ensureSeeded(): Promise<void> {
   seededInProcess = true;
 }
 
+/** 仅供测试：测试清空数据库后调用，让 ensureSeeded 重新初始化数据 */
+export function resetSeededFlagForTest(): void {
+  seededInProcess = false;
+}
+
 export async function getPlayer(executor: DbExecutor = db): Promise<PlayerRow> {
   await ensureSeeded();
   const [p] = await executor.select().from(players).orderBy(players.id).limit(1);

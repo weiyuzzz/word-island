@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { studySessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { ensureSeeded, getPlayer } from "../player";
+import { ensureSeeded, getPlayer, resetSeededFlagForTest } from "../player";
 import { createSession, finishSession, submitAnswer } from "../study";
 import { buildAt, getIsland, upgradeBuilding } from "../island";
 import { claimTask, getDailyTasks } from "../tasks";
@@ -12,7 +12,10 @@ import { getDashboard, getStats } from "../dashboard";
 import { dateKey } from "@/lib/utils";
 
 async function resetDb() {
+  // 测试库可能还没有表（首次运行），先建表再清空
+  await ensureSeeded();
   await db.execute(sql`truncate table review_logs, word_progress, study_sessions, daily_stats, task_claims, achievements, buildings, words, decks, players restart identity cascade`);
+  resetSeededFlagForTest();
 }
 
 describe("完整游戏闭环（真实数据库）", () => {
