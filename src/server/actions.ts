@@ -6,7 +6,8 @@ import { claimLoginReward, updateDailyGoal } from "./dashboard";
 import { buildAt, removeBuilding, upgradeBuilding } from "./island";
 import { createSession, finishSession, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
-import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, updateWord } from "./vocab";
+import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, shareDeck, updateWord } from "./vocab";
+import { exportProgress } from "./backup";
 import { sanitizeError, schemas } from "./validate";
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -124,4 +125,14 @@ export async function exportDeckAction(deckId: number, format: ImportFormat) {
   const parsed = schemas.exportDeck.safeParse({ deckId, format });
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => exportDeck(parsed.data.deckId, parsed.data.format));
+}
+
+export async function shareDeckAction(deckId: number) {
+  const parsed = schemas.shareDeck.safeParse({ deckId });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => shareDeck(parsed.data.deckId));
+}
+
+export async function exportProgressAction() {
+  return run(() => exportProgress());
 }

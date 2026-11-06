@@ -1,3 +1,5 @@
+import type { WordInput } from "@/lib/vocab/parse";
+
 export type WordStatus = "new" | "learning" | "review" | "mastered";
 export type QuizMode = "en2zh" | "zh2en" | "spelling" | "context" | "listen" | "synonym" | "antonym" | "sentence";
 export type SessionKind = "mixed" | "review" | "new";
@@ -185,9 +187,21 @@ export interface DailyStatPoint {
   sessionsCompleted: number;
 }
 
+export interface WeakWord {
+  id: number;
+  word: string;
+  meaning: string;
+  status: WordStatus;
+  proficiency: number;
+  wrongCount: number;
+  correctCount: number;
+}
+
 export interface StatsData {
   player: PlayerSnapshot;
   series: DailyStatPoint[];
+  heatmap: DailyStatPoint[];
+  weakWords: WeakWord[];
   statusCounts: Record<WordStatus, number>;
   totalWords: number;
   totalAnswered: number;
@@ -197,6 +211,16 @@ export interface StatsData {
   lastWeek: { total: number; newLearned: number; reviewed: number; accuracy: number | null };
   review: { dueNow: number; reviewedToday: number; upcoming24h: number };
   activeDays: number;
+}
+
+export interface ProgressBackup {
+  app: string;
+  version: number;
+  exportedAt: string;
+  player: { name: string; coins: number; xp: number; streak: number; bestStreak: number; dailyGoal: number; totalAnswered: number; totalCorrect: number };
+  decks: { name: string; kind: string; color: string; description: string; words: WordInput[] }[];
+  achievements: { key: string; unlockedAt: string }[];
+  dailyStats: { date: string; newLearned: number; reviewed: number; correct: number; total: number; sessionsCompleted: number }[];
 }
 
 export interface DashboardData {

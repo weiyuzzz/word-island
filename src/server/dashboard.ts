@@ -1,8 +1,8 @@
 import { db } from "@/db";
 import { buildings, dailyStats, decks, players, wordProgress, words } from "@/db/schema";
-import { and, asc, eq, gte, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
 import { LOGIN_REWARD, levelFromXp } from "@/lib/game/economy";
-import type { DashboardData, DailyStatPoint, StatsData, WordStatus } from "@/lib/types";
+import type { DashboardData, DailyStatPoint, StatsData, WeakWord, WordStatus } from "@/lib/types";
 import { dateKey, shiftDateKey, shortDateLabel } from "@/lib/utils";
 import { islandProgress } from "./island";
 import { bumpDaily, effectiveStreak, ensureSeeded, getPlayer, getTodayStats, lockPlayer, snapshot } from "./player";
@@ -110,14 +110,15 @@ export async function getStats(): Promise<StatsData> {
   await ensureSeeded();
   const player = await getPlayer();
   const today = dateKey();
-  const start = shiftDateKey(today, -13);
+  const start = shiftDateKey(today, -29);
   const rows = await db.select().from(dailyStats).where(gte(dailyStats.date, start)).orderBy(asc(dailyStats.date));
   const map = new Map(rows.map((r) => [r.date, r]));
   const series: DailyStatPoint[] = [];
-  for (let i = 13; i >= 0; i--) {
+  const heatmap: DailyStatPoint[] = [];
+  for (let i = 29; i >= 0; i--) {
     const key = shiftDateKey(today, -i);
     const r = map.get(key);
-    series.push({
+    const point: DailyStatPoint = {
       date: key,
       label: shortDateLabel(key),
       newLearned: r?.newLearned ?? 0,
@@ -126,7 +127,9 @@ export async function getStats(): Promise<StatsData> {
       total: r?.total ?? 0,
       accuracy: r && r.total > 0 ? Math.round((r.correct / r.total) * 100) : null,
       sessionsCompleted: r?.sessionsCompleted ?? 0,
-    });
+    };
+    heatmap.push(point);
+    if (i <= 13) series.push(point);
   }
 
   const statusRows = await db
@@ -150,12 +153,39 @@ export async function getStats(): Promise<StatsData> {
   const [activeRow] = await db.select({ count: sql<number>`count(*)::int` }).from(dailyStats).where(sql`${dailyStats.total} > 0`);
   const todayStats = series[series.length - 1];
 
+  const weakRows = await db
+    .select({
+      id: words.id,
+      word: words.word,
+      meaning: words.meaning,
+      status: wordProgress.status,
+      proficiency: wordProgress.proficiency,
+      wrongCount: wordProgress.wrongCount,
+      correctCount: wordProgress.correctCount,
+    })
+    .from(words)
+    .innerJoin(wordProgress, eq(wordProgress.wordId, words.id))
+    .where(ne(wordProgress.status, "new"))
+    .orderBy(desc(wordProgress.wrongCount), asc(wordProgress.proficiency))
+    .limit(12);
+  const weakWords: WeakWord[] = weakRows.map((r) => ({
+    id: r.id,
+    word: r.word,
+    meaning: r.meaning,
+    status: r.status as WordStatus,
+    proficiency: r.proficiency,
+    wrongCount: r.wrongCount,
+    correctCount: r.correctCount,
+  }));
+
   const snap = snapshot(player);
   snap.streak = effectiveStreak(player, today);
 
   return {
     player: snap,
     series,
+    heatmap,
+    weakWords,
     statusCounts,
     totalWords,
     totalAnswered: player.totalAnswered,

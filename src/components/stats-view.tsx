@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowDownRight, ArrowUpRight, Brain, CalendarDays, CheckCircle2, Flame, Target, TrendingUp } from "lucide-react";
-import type { StatsData } from "@/lib/types";
+import type { DailyStatPoint, StatsData, WeakWord } from "@/lib/types";
 import { STATUS_META } from "@/lib/game/srs";
 import { cn, percent } from "@/lib/utils";
 import { Card, ProgressBar, Ring, SectionTitle } from "./ui";
+import { ExportProgressButton } from "./export-progress-button";
 
 const STATUS_COLORS: Record<string, string> = { new: "#cbd5e1", learning: "#f7c948", review: "#4ea8e6", mastered: "#55bb6a" };
 
@@ -24,6 +25,85 @@ function Delta({ now, before, suffix = "" }: { now: number; before: number; suff
   );
 }
 
+const HEAT_LEVEL_BG = ["bg-slate-100", "bg-leaf-100", "bg-leaf-300", "bg-leaf-500"];
+
+function heatLevel(total: number): number {
+  if (total <= 0) return 0;
+  if (total < 10) return 1;
+  if (total < 30) return 2;
+  return 3;
+}
+
+/** GitHub 风格的活动热力图：按周（周日为首列）排列最近 30 天 */
+function Heatmap({ points }: { points: DailyStatPoint[] }) {
+  const cells: (DailyStatPoint | null)[] = [];
+  if (points.length > 0) {
+    const first = new Date(`${points[0].date}T00:00:00Z`);
+    const lead = first.getUTCDay(); // 0=Sun
+    for (let i = 0; i < lead; i++) cells.push(null);
+  }
+  cells.push(...points);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar">
+        <div className="grid grid-flow-col grid-rows-7 gap-1.5">
+          {cells.map((c, i) => (
+            <div
+              key={i}
+              title={c ? `${c.date}：${c.total} 题` : undefined}
+              className={cn("h-5 w-5 rounded-[5px]", c ? HEAT_LEVEL_BG[heatLevel(c.total)] : "bg-transparent")}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+        <span>少</span>
+        {HEAT_LEVEL_BG.map((bg, i) => (
+          <span key={i} className={cn("h-3 w-3 rounded-[4px]", bg)} />
+        ))}
+        <span>多</span>
+        <span className="ml-auto">最近 30 天</span>
+      </div>
+    </div>
+  );
+}
+
+function WeakWords({ words, totalWords }: { words: WeakWord[]; totalWords: number }) {
+  if (words.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <CheckCircle2 className="mx-auto h-9 w-9 text-leaf-400" />
+        <h3 className="mt-2 text-sm font-semibold">还没有薄弱词</h3>
+        <p className="mt-1 text-xs text-slate-500">{totalWords > 0 ? "你目前掌握的单词都很稳，继续保持！" : "开始学习后，这里会列出最容易答错的单词。"}</p>
+      </Card>
+    );
+  }
+  return (
+    <Card className="divide-y divide-slate-100 p-2">
+      {words.map((w) => (
+        <div key={w.id} className="flex items-center gap-3 px-2 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold">{w.word}</span>
+              <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{STATUS_META[w.status].label}</span>
+            </div>
+            <p className="truncate text-xs text-slate-500">{w.meaning}</p>
+          </div>
+          <div className="flex w-28 shrink-0 items-center gap-2">
+            <ProgressBar value={w.proficiency} max={100} height="h-1.5" className="flex-1" barClassName={w.status === "mastered" ? "bg-leaf-500" : "bg-ocean-400"} />
+            <span className="w-9 text-right text-[11px] text-slate-400">{w.proficiency}%</span>
+          </div>
+          {w.wrongCount > 0 && (
+            <span className="shrink-0 rounded-full bg-coral-50 px-2 py-0.5 text-[11px] font-medium text-coral-500">错 {w.wrongCount}</span>
+          )}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export function StatsView({ data }: { data: StatsData }) {
   const learned = data.statusCounts.learning + data.statusCounts.review + data.statusCounts.mastered;
   const overallAccuracy = data.totalAnswered ? Math.round((data.totalCorrect / data.totalAnswered) * 100) : null;
@@ -35,10 +115,15 @@ export function StatsView({ data }: { data: StatsData }) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight md:text-2xl">学习统计</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          累计学习 {data.activeDays} 天 · 答题 {data.totalAnswered} 次
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight md:text-2xl">学习统计</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              累计学习 {data.activeDays} 天 · 答题 {data.totalAnswered} 次
+            </p>
+          </div>
+          <ExportProgressButton />
+        </div>
       </div>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
@@ -84,6 +169,20 @@ export function StatsView({ data }: { data: StatsData }) {
           </Link>
         </Card>
       )}
+
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <section>
+          <SectionTitle>学习活跃度</SectionTitle>
+          <Card className="p-4">
+            <Heatmap points={data.heatmap} />
+          </Card>
+        </section>
+
+        <section>
+          <SectionTitle>薄弱词清单</SectionTitle>
+          <WeakWords words={data.weakWords} totalWords={data.totalWords} />
+        </section>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <section>

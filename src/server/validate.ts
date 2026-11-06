@@ -68,6 +68,9 @@ export const schemas = {
     deckId: z.number().int().positive(),
     format: IMPORT_FORMAT,
   }),
+  shareDeck: z.object({
+    deckId: z.number().int().positive(),
+  }),
 };
 
 export const gameSchemas = {

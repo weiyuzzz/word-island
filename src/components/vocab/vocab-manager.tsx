@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { AlertCircle, BookOpen, Download, FolderPlus, Loader2, Pencil, Play, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, BookOpen, Download, FolderPlus, Loader2, Pencil, Play, Plus, Search, Share2, Trash2, Upload, X } from "lucide-react";
 import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { STATUS_META, proficiencyLabel } from "@/lib/game/srs";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { cn, formatRelativeTime, percent } from "@/lib/utils";
-import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, updateWordAction } from "@/server/actions";
+import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, shareDeckAction, updateWordAction } from "@/server/actions";
 import { Button, Card, EmptyState, Modal, Pill, ProgressBar, STATUS_TONE, SpeakButton, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { ImportDialog } from "./import-dialog";
@@ -51,6 +51,7 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
   const [importOpen, setImportOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newDeckName, setNewDeckName] = useState("");
+  const [share, setShare] = useState<{ name: string; content: string } | null>(null);
   const [detail, setDetail] = useState<WordView | null>(null);
   const [editing, setEditing] = useState<{ id: number | null; form: WordInput } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -137,6 +138,23 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
       download(res.data.filename, res.data.content, res.data.mime);
       toast({ kind: "success", title: `已导出 ${res.data.filename}` });
     });
+  };
+
+  const shareCustomDeck = () => {
+    if (!deck) return;
+    startTransition(async () => {
+      const res = await shareDeckAction(deck.id);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setShare({ name: res.data.name, content: res.data.content });
+    });
+  };
+
+  const copyShare = () => {
+    if (!share) return;
+    navigator.clipboard
+      .writeText(share.content)
+      .then(() => toast({ kind: "success", title: "已复制到剪贴板" }))
+      .catch(() => toast({ kind: "error", title: "复制失败，请手动选择文本复制" }));
   };
 
   const saveWord = () => {
@@ -260,6 +278,7 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
                   <Button size="sm" variant="secondary" icon={<Download className="h-4 w-4" />} onClick={() => exportDeck("json")} disabled={pending}>
                     JSON
                   </Button>
+                  {isCustom && <Button size="sm" variant="secondary" icon={<Share2 className="h-4 w-4" />} onClick={shareCustomDeck} disabled={pending}>分享</Button>}
                   {isCustom && <Button size="sm" variant="ghost" aria-label="删除词库" icon={<Trash2 className="h-4 w-4 text-coral-500" />} onClick={removeDeck} />}
                 </div>
               </div>
@@ -482,6 +501,26 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
       </Modal>
 
       <ImportDialog key={String(deckId)} open={importOpen} onClose={() => setImportOpen(false)} decks={decks} defaultDeckId={isCustom ? deckId : null} onDone={onImported} />
+      <Modal
+        open={Boolean(share)}
+        onClose={() => setShare(null)}
+        title={`分享词库「${share?.name ?? ""}」`}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShare(null)}>
+              关闭
+            </Button>
+            <Button onClick={copyShare}>复制内容</Button>
+          </div>
+        }
+      >
+        {share && (
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-slate-500">把下面的内容复制给朋友，对方在「词库 → 导入」时粘贴即可导入这份词库（{share.name}）。</p>
+            <textarea readOnly value={share.content} className="h-64 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs outline-none focus:border-ocean-400" />
+          </div>
+        )}
+      </Modal>
       <ConfirmDialog state={confirm.state} onClose={confirm.close} />
     </div>
   );

@@ -243,3 +243,21 @@ export async function exportDeck(deckId: number, format: ImportFormat): Promise<
   }
   return { filename: `${safeName}.csv`, content: `\uFEFF${toCsv(items)}`, mime: "text/csv" };
 }
+
+/** 生成可分享的词库内容：带名称与版本标记的 JSON，对方可在「导入」时粘贴 */
+export async function shareDeck(deckId: number): Promise<{ name: string; content: string }> {
+  const [deck] = await db.select().from(decks).where(eq(decks.id, deckId));
+  if (!deck) throw new Error("词库不存在");
+  const rows = await db.select().from(words).where(eq(words.deckId, deckId)).orderBy(asc(words.id));
+  const items: WordInput[] = rows.map((r) => ({
+    word: r.word,
+    phonetic: r.phonetic,
+    pos: r.pos,
+    meaning: r.meaning,
+    example: r.example,
+    translation: r.translation,
+    difficulty: r.difficulty,
+  }));
+  const payload = { name: deck.name, version: 1, words: items };
+  return { name: deck.name, content: JSON.stringify(payload, null, 2) };
+}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { BookOpen, ChartColumn, Compass, GraduationCap, House, Sprout, TreePalm } from "lucide-react";
+import { BookOpen, ChartColumn, Compass, GraduationCap, House, Sprout, TreePalm, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ImmersiveCtx, ToastProvider } from "./ui";
 
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/garden", label: "花园", icon: Sprout },
   { href: "/vocab", label: "词库", icon: BookOpen },
   { href: "/stats", label: "统计", icon: ChartColumn },
+  { href: "/achievements", label: "成就", icon: Trophy },
 ];
 
 function Logo() {
@@ -102,7 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Mobile bottom nav */}
         {!immersive && (
           <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/70 bg-white/90 backdrop-blur md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <ul className="grid grid-cols-7">
+            <ul className="grid grid-cols-8">
               {NAV.map((item) => {
                 const active = isActive(item.href);
                 return (
