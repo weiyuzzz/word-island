@@ -9,6 +9,7 @@ import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { cn, formatRelativeTime, percent } from "@/lib/utils";
 import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, updateWordAction } from "@/server/actions";
 import { Button, Card, EmptyState, Modal, Pill, ProgressBar, STATUS_TONE, SpeakButton, useToast } from "../ui";
+import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { ImportDialog } from "./import-dialog";
 
 const STATUS_FILTERS: { key: WordStatus | "all"; label: string }[] = [
@@ -35,6 +36,7 @@ function download(filename: string, content: string, mime: string) {
 
 export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: DeckSummary[]; initialDeckId: number | null }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [decks, setDecks] = useState(initialDecks);
   const [deckId, setDeckId] = useState<number | null>(initialDeckId ?? initialDecks[0]?.id ?? null);
   const [q, setQ] = useState("");
@@ -110,13 +112,20 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
 
   const removeDeck = () => {
     if (!deck) return;
-    if (!window.confirm(`确定删除词库「${deck.name}」及其 ${deck.total} 个单词吗？学习记录也会一并删除。`)) return;
-    startTransition(async () => {
-      const res = await deleteDeckAction(deck.id);
-      if (!res.ok) return toast({ kind: "error", title: res.error });
-      await refreshDecks();
-      setDeckId(decks.find((d) => d.id !== deck.id)?.id ?? null);
-      toast({ kind: "info", title: "词库已删除" });
+    confirm.confirm({
+      title: `删除词库「${deck.name}」`,
+      description: `确定删除词库「${deck.name}」及其 ${deck.total} 个单词吗？学习记录也会一并删除。`,
+      confirmLabel: "删除",
+      variant: "danger",
+      onConfirm: () => {
+        startTransition(async () => {
+          const res = await deleteDeckAction(deck.id);
+          if (!res.ok) return toast({ kind: "error", title: res.error });
+          await refreshDecks();
+          setDeckId(decks.find((d) => d.id !== deck.id)?.id ?? null);
+          toast({ kind: "info", title: "词库已删除" });
+        });
+      },
     });
   };
 
@@ -145,14 +154,21 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
   };
 
   const removeWord = (w: WordView) => {
-    if (!window.confirm(`删除单词「${w.word}」？`)) return;
-    startTransition(async () => {
-      const res = await deleteWordAction(w.id);
-      if (!res.ok) return toast({ kind: "error", title: res.error });
-      setDetail(null);
-      await load();
-      void refreshDecks();
-      toast({ kind: "info", title: "单词已删除" });
+    confirm.confirm({
+      title: `删除单词「${w.word}」`,
+      description: `确定删除单词「${w.word}」吗？`,
+      confirmLabel: "删除",
+      variant: "danger",
+      onConfirm: () => {
+        startTransition(async () => {
+          const res = await deleteWordAction(w.id);
+          if (!res.ok) return toast({ kind: "error", title: res.error });
+          setDetail(null);
+          await load();
+          void refreshDecks();
+          toast({ kind: "info", title: "单词已删除" });
+        });
+      },
     });
   };
 
@@ -466,6 +482,7 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
       </Modal>
 
       <ImportDialog key={String(deckId)} open={importOpen} onClose={() => setImportOpen(false)} decks={decks} defaultDeckId={isCustom ? deckId : null} onDone={onImported} />
+      <ConfirmDialog state={confirm.state} onClose={confirm.close} />
     </div>
   );
 }

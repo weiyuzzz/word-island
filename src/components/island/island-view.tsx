@@ -8,6 +8,7 @@ import type { BuildingView, IslandState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { buildAction, removeBuildingAction, upgradeAction } from "@/server/actions";
 import { Button, Card, CoinIcon, Pill, ProgressBar, useToast } from "../ui";
+import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { BuildingArt, BuildingPreview } from "./building-art";
 import { Island3D } from "./island-3d";
 import { useSceneMode } from "../world/use-scene-mode";
@@ -167,6 +168,7 @@ type Panel = "overview" | "shop" | "building";
 
 export function IslandView({ initial }: { initial: IslandState }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [island, setIsland] = useState<IslandState>(initial);
   const [panel, setPanel] = useState<Panel>("overview");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -265,16 +267,23 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const doRemove = () => {
     if (!selected || !selectedDef) return;
     const refund = refundFor(selectedDef, selected.level);
-    if (!window.confirm(`确定拆除${selectedDef.name}吗？将返还 ${refund} 金币。`)) return;
-    startTransition(async () => {
-      const before = island.player.coins;
-      const res = await removeBuildingAction(selected.id);
-      if (!res.ok) return toast({ kind: "error", title: res.error });
-      setIsland(res.data.island);
-      showDelta(before, res.data.island.player.coins);
-      setSelectedId(null);
-      setPanel("overview");
-      toast({ kind: "info", title: `已拆除，返还 ${res.data.refund} 金币` });
+    confirm.confirm({
+      title: `拆除${selectedDef.name}`,
+      description: `确定拆除${selectedDef.name}吗？将返还 ${refund} 金币。`,
+      confirmLabel: "拆除",
+      variant: "danger",
+      onConfirm: () => {
+        startTransition(async () => {
+          const before = island.player.coins;
+          const res = await removeBuildingAction(selected.id);
+          if (!res.ok) return toast({ kind: "error", title: res.error });
+          setIsland(res.data.island);
+          showDelta(before, res.data.island.player.coins);
+          setSelectedId(null);
+          setPanel("overview");
+          toast({ kind: "info", title: `已拆除，返还 ${res.data.refund} 金币` });
+        });
+      },
     });
   };
 
@@ -528,6 +537,7 @@ export function IslandView({ initial }: { initial: IslandState }) {
           )}
         </div>
       </div>
+      <ConfirmDialog state={confirm.state} onClose={confirm.close} />
     </div>
   );
 }

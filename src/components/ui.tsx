@@ -99,21 +99,49 @@ export const STATUS_TONE: Record<string, Tone> = { new: "slate", learning: "sun"
 
 // ---------- Modal (bottom sheet on mobile) ----------
 export function Modal({ open, onClose, title, children, footer, size = "md" }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; footer?: ReactNode; size?: "md" | "lg" }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Tab") {
+        const container = dialogRef.current;
+        if (!container) return;
+        const focusable = container.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) { e.preventDefault(); return; }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
+    previousFocus.current = document.activeElement as HTMLElement;
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    focusable?.[0]?.focus();
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      previousFocus.current?.focus?.();
     };
   }, [open, onClose]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-ink/30 backdrop-blur-[2px]" onClick={onClose} />
-      <div className={cn("relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-lift animate-fade-up sm:m-4 sm:rounded-3xl", size === "lg" ? "sm:max-w-2xl" : "sm:max-w-lg")}>
+      <div ref={dialogRef} className={cn("relative z-10 flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-lift animate-fade-up sm:m-4 sm:rounded-3xl", size === "lg" ? "sm:max-w-2xl" : "sm:max-w-lg")}>
         <div className="flex items-center justify-between px-5 pt-4 pb-2 sm:px-6">
           <div className="text-base font-semibold">{title}</div>
           <button onClick={onClose} aria-label="关闭" className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100">

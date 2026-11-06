@@ -1,4 +1,10 @@
-export const APP_TIMEZONE = "Asia/Shanghai";
+export const APP_TIMEZONE = process.env.TIMEZONE ?? (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
 
 /** 返回 YYYY-MM-DD（按应用时区） */
 export function dateKey(d: Date = new Date()): string {

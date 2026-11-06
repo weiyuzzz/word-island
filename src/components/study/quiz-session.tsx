@@ -8,6 +8,7 @@ import { MODE_META, STATUS_META } from "@/lib/game/srs";
 import { cn, findWordInSentence, formatRelativeTime } from "@/lib/utils";
 import { answerAction, finishSessionAction } from "@/server/actions";
 import { Button, Card, CoinIcon, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
+import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 
 interface Props {
   session: ClientSession;
@@ -88,6 +89,7 @@ function Prompt({ q }: { q: ClientQuestion }) {
 
 export function QuizSession({ session, onExit, onRestart }: Props) {
   const toast = useToast();
+  const confirm = useConfirm();
   useImmersive(true);
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<"answering" | "feedback" | "summary">("answering");
@@ -158,7 +160,13 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
   const exit = () => {
     if (earned.answered === 0) return onExit();
-    if (window.confirm("提前结束本组学习？已答题目的奖励会保留，但不会获得完成奖励。")) finish();
+    confirm.confirm({
+      title: "提前结束学习？",
+      description: "已答题目的奖励会保留，但不会获得完成奖励。",
+      confirmLabel: "结束",
+      variant: "primary",
+      onConfirm: finish,
+    });
   };
 
   // keyboard shortcuts
@@ -464,6 +472,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
           </Button>
         </div>
       )}
+      <ConfirmDialog state={confirm.state} onClose={confirm.close} />
     </div>
   );
 }
