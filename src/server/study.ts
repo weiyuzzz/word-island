@@ -98,8 +98,9 @@ function toClientQuestion(q: QuestionRecord, w: WordRow, index: number): ClientQ
     case "spelling":
       return { ...base, meaning: w.meaning, pos: w.pos, prompt: q.prompt, length: w.word.length, firstLetter: w.word[0] };
     case "dictation":
-      // 纯拼写：客户端需要单词本身做逐字母校验（单词反正会朗读出来，不额外泄露答案）
-      return { ...base, word: w.word, phonetic: w.phonetic, length: w.word.length };
+      // 纯拼写：客户端需要单词本身做逐字母比对（单词反正会朗读出来，不额外泄露答案），
+      // meaning / phonetic 只在判错后的复查界面展示
+      return { ...base, word: w.word, phonetic: w.phonetic, meaning: w.meaning, length: w.word.length };
     default:
       return base;
   }
@@ -238,8 +239,11 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
 
     if (q.answered) {
       const [p] = await tx.select().from(players).orderBy(players.id).limit(1);
+      // 纯拼写等模式允许对同一题多次作答：重复提交不发奖，但若本次确实拼对了，
+      // 返回 correct=true 以便客户端展示「回答正确」而不是沿用首次的错误结果
+      const recheck = isCorrect(q, input.answer);
       return {
-        correct: Boolean(q.wasCorrect),
+        correct: Boolean(q.wasCorrect) || recheck,
         correctAnswer: q.correct,
         word: toDetail(word),
         reward: { coins: 0, xp: 0, streakBonus: 0 },

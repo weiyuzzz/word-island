@@ -32,8 +32,8 @@ function Prompt({ q }: { q: ClientQuestion }) {
   if (q.mode === "dictation") {
     return (
       <div className="text-center">
-        <p className="text-sm font-medium text-slate-500">听发音，在下方格子中拼出这个单词</p>
-        <p className="mt-1 text-xs text-slate-400">听不清可以点击喇叭重听 · 答错的字母不会前进</p>
+        <p className="text-sm font-medium text-slate-500">听发音，拼出这个单词</p>
+        <p className="mt-1 text-xs text-slate-400">听不清可以点击喇叭重听</p>
       </div>
     );
   }
@@ -95,121 +95,128 @@ function Prompt({ q }: { q: ClientQuestion }) {
   );
 }
 
-/** 纯拼写（听写）：逐字母输入，正确前进、错误抖动不动，全部拼对自动提交 */
-function DictationArea({ q, disabled, usedHint, onUseHint, onSubmit }: { q: ClientQuestion; disabled: boolean; usedHint: boolean; onUseHint: () => void; onSubmit: (answer: string) => void }) {
-  const target = q.word ?? "";
-  const [confirmed, setConfirmed] = useState(0);
-  const [wrongPing, setWrongPing] = useState(0);
-  const [done, setDone] = useState(false);
-  const confirmedRef = useRef(0);
+/**
+ * 纯拼写（听写）视图，循环流程：
+ * 1) blind  盲拼：只听发音，界面只有一条输入线
+ * 2) checked 判错：连续字母逐位标色（对=绿 / 错=红），展示释义与发音
+ * 3) shadow 跟拼：显示单词阴影，输入部分变亮，跟着模仿
+ * 4) 回到 blind…… 直到拼对，展示完整单词详情
+ */
+function DictationView({ target, typed, onType, attempt, stage, locked, pending, meaning, phonetic, onRetry, onCheck }: {
+  target: string;
+  typed: string;
+  onType: (v: string) => void;
+  attempt: number;
+  stage: "blind" | "shadow" | "checked" | "correct";
+  locked: boolean;
+  pending: boolean;
+  meaning?: string;
+  phonetic?: string;
+  onRetry: () => void;
+  onCheck: () => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const submittedRef = useRef(false);
-
-  const isLetterChar = (c: string) => /[a-z0-9]/i.test(c);
-  // 跳过单词中的分隔符（空格 / 连字符 / 撇号等），这些字符自动点亮
-  const skipSeparators = (k: number) => {
-    let next = k;
-    while (next < target.length && !isLetterChar(target[next])) next += 1;
-    return next;
-  };
 
   useEffect(() => {
-    confirmedRef.current = skipSeparators(0);
-    setConfirmed(confirmedRef.current);
-    submittedRef.current = false;
-    setDone(false);
-    const t = setTimeout(() => inputRef.current?.focus(), 80);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target]);
-
-  const commit = (k: number) => {
-    confirmedRef.current = k;
-    setConfirmed(k);
-    if (k >= target.length && !submittedRef.current) {
-      submittedRef.current = true;
-      setDone(true);
-      onSubmit(target);
+    if (stage === "blind" || stage === "shadow") {
+      const t = setTimeout(() => inputRef.current?.focus(), 60);
+      return () => clearTimeout(t);
     }
-  };
+  }, [stage, attempt]);
 
-  const handleInput = (raw: string) => {
-    if (disabled || submittedRef.current || !target) return;
-    for (const ch of raw) {
-      if (!ch.trim()) continue;
-      const k = skipSeparators(confirmedRef.current);
-      if (k >= target.length) break;
-      if (target[k].toLowerCase() === ch.toLowerCase()) {
-        commit(skipSeparators(k + 1));
-      } else {
-        setWrongPing((n) => n + 1);
-      }
-    }
-  };
-
-  const useHintLetter = () => {
-    if (disabled || submittedRef.current) return;
-    const k = skipSeparators(confirmedRef.current);
-    if (k >= target.length) return;
-    onUseHint();
-    commit(skipSeparators(k + 1));
-  };
-
-  const remaining = target.length - confirmed;
+  const maxLen = Math.max(target.length, typed.length);
+  const wordRowClass = "flex items-baseline justify-center gap-0 pb-2 font-mono text-3xl leading-none tracking-[0.25em] sm:text-4xl";
 
   return (
     <div className="mt-6">
-      <div className="relative">
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {target.split("").map((c, i) => {
-            const filled = i < confirmed;
-            const active = i === confirmed && !done;
-            return (
-              <span
-                key={i}
-                className={cn(
-                  "grid h-11 w-8 place-items-center rounded-xl border-2 font-mono text-lg font-bold transition-all sm:h-12 sm:w-9",
-                  target.length > 12 && "h-10 w-7 text-base sm:w-8",
-                  filled ? "border-ocean-500 bg-ocean-500 text-white shadow-sm" : "border-slate-200 bg-slate-100/80 text-transparent",
-                  active && "border-ocean-400 bg-white ring-2 ring-ocean-200",
-                )}
-              >
-                {filled ? c : "·"}
-              </span>
-            );
-          })}
+      {stage === "blind" && (
+        <div className="mx-auto max-w-md">
+          <input
+            ref={inputRef}
+            value={typed}
+            onChange={(e) => onType(e.target.value)}
+            disabled={locked}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            aria-label={`默写听到的单词（第 ${attempt} 遍）`}
+            className="h-12 w-full border-b-2 border-slate-300 bg-transparent text-center font-mono text-2xl tracking-[0.35em] outline-none transition focus:border-ocean-400 disabled:opacity-60"
+          />
         </div>
-        <input
-          ref={inputRef}
-          defaultValue=""
-          onChange={(e) => {
-            const v = e.target.value;
-            e.target.value = "";
-            handleInput(v);
-          }}
-          disabled={disabled}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          aria-label="逐字母输入听写答案"
-          className="absolute inset-0 h-full w-full cursor-text opacity-0"
-        />
-      </div>
-      {wrongPing > 0 && remaining > 0 && (
-        <p key={wrongPing} className="mt-2 animate-shake text-center text-xs font-medium text-coral-500">
-          第 {confirmed + 1} 个字母不对，再听听
-        </p>
       )}
-      <div className="mt-4 flex items-center justify-center gap-2">
-        <SpeakButton text={target} />
-        <button type="button" onClick={useHintLetter} disabled={usedHint || disabled} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-50">
-          <Lightbulb className="h-4 w-4" /> 提示下一个字母（奖励减少）
-        </button>
-        <span className="text-xs text-slate-400">
-          {confirmed}/{target.length}
-        </span>
-      </div>
+
+      {stage === "shadow" && (
+        <div className="relative mx-auto max-w-2xl">
+          <div aria-hidden className={cn(wordRowClass, "border-b-2 border-slate-200")}>
+            {target.split("").map((c, i) => (
+              <span key={i} className={cn(i < typed.length ? (typed[i].toLowerCase() === c.toLowerCase() ? "text-ocean-600" : "text-coral-500") : "text-slate-300")}>{c}</span>
+            ))}
+            <span className="ml-0.5 inline-block h-7 w-0.5 animate-pulse rounded bg-ocean-500 sm:h-8" />
+          </div>
+          <input
+            ref={inputRef}
+            value={typed}
+            onChange={(e) => onType(e.target.value)}
+            disabled={locked}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            aria-label="跟着阴影输入单词"
+            className="absolute inset-0 h-full w-full cursor-text bg-transparent text-center font-mono text-3xl tracking-[0.25em] text-transparent caret-ocean-500 outline-none sm:text-4xl"
+          />
+        </div>
+      )}
+
+      {stage === "checked" && (
+        <div>
+          <div aria-hidden className={cn(wordRowClass, "border-b-2 border-coral-400")}>
+            {Array.from({ length: maxLen }).map((_, i) => {
+              const ch = i < typed.length ? typed[i] : target[i];
+              const ok = typed[i] != null && target[i] != null && typed[i].toLowerCase() === target[i].toLowerCase();
+              return (
+                <span key={i} className={ok ? "text-leaf-600" : "text-coral-500"}>{ch}</span>
+              );
+            })}
+          </div>
+          <div className="mx-auto mt-4 max-w-md rounded-2xl border border-dashed border-slate-300 p-4 text-center">
+            {phonetic && <div className="font-mono text-sm text-slate-400">{phonetic}</div>}
+            <div className="mt-1 inline-flex items-center gap-2">
+              <span className="text-base font-medium">{meaning}</span>
+              <SpeakButton text={target} size="sm" />
+            </div>
+          </div>
+          <p className="mt-3 text-center text-xs text-slate-400">红色是拼错或漏掉的字母 · 按下面的按钮或 Enter 跟着阴影再拼一遍</p>
+        </div>
+      )}
+
+      {stage === "correct" && (
+        <div aria-hidden className={cn(wordRowClass, "border-b-2 border-leaf-400 text-leaf-600")}>
+          {target.split("").map((c, i) => (
+            <span key={i}>{c}</span>
+          ))}
+        </div>
+      )}
+
+      {(stage === "blind" || stage === "shadow") && (
+        <div className="mt-5 flex items-center justify-center gap-2">
+          <SpeakButton text={target} />
+          <Button size="sm" onClick={onCheck} loading={pending} disabled={locked || !typed.trim()}>
+            检查<span className="ml-1 hidden text-xs font-normal opacity-70 sm:inline">（Enter）</span>
+          </Button>
+          <span className="text-xs text-slate-400">
+            第 {attempt} 遍 · {stage === "shadow" ? "跟着阴影拼" : "直接默写"}
+          </span>
+        </div>
+      )}
+      {stage === "checked" && (
+        <div className="mt-4 flex justify-center">
+          <Button size="sm" onClick={onRetry} icon={<ArrowRight className="h-4 w-4" />}>
+            模仿拼写<span className="ml-1 hidden text-xs font-normal opacity-70 sm:inline">（Enter）</span>
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -228,11 +235,24 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   const [earned, setEarned] = useState({ coins: 0, xp: 0, correct: 0, answered: 0 });
   const [sessionStreak, setSessionStreak] = useState(0);
   const [pending, startTransition] = useTransition();
+  // 纯拼写（听写）多轮尝试：第 1 遍盲拼 → 判错 → 第 2 遍阴影跟拼 → 第 3 遍再盲拼……直到拼对
+  const [dictTyped, setDictTyped] = useState("");
+  const [dictAttempt, setDictAttempt] = useState(1);
+  const [dictLocalWrong, setDictLocalWrong] = useState(false);
+  const [dictIndex, setDictIndex] = useState(index);
   const startRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const q = session.questions[index];
   const total = session.total;
+
+  // 换题时重置听写尝试状态（渲染期调整，避免 effect 里 setState）
+  if (dictIndex !== index) {
+    setDictIndex(index);
+    setDictTyped("");
+    setDictAttempt(1);
+    setDictLocalWrong(false);
+  }
 
   useEffect(() => {
     startRef.current = Date.now();
@@ -304,6 +324,29 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     return () => clearTimeout(t);
   }, [phase, result, next, q?.mode]);
 
+  // 纯拼写：提交当前输入。第 1 遍交给服务端判定并记入 SRS；之后的尝试先在
+  // 本地比对，只有拼对才提交（服务端判重不重复发奖，但会按实际作答返回 correct）
+  const checkDictation = useCallback(() => {
+    if (phase !== "answering" || pending || !q || q.mode !== "dictation" || dictLocalWrong) return;
+    const answer = dictTyped.trim();
+    if (!answer) return;
+    if (dictAttempt === 1) return submit(answer);
+    if (answer.toLowerCase() === (q.word ?? "").toLowerCase()) return submit(answer);
+    setDictLocalWrong(true);
+  }, [phase, pending, q, dictTyped, dictAttempt, dictLocalWrong, submit]);
+
+  // 纯拼写：判错后留在当前单词，进入下一遍（盲拼/阴影跟拼交替）
+  const retryDictation = useCallback(() => {
+    setDictLocalWrong(false);
+    setDictTyped("");
+    setDictAttempt((a) => a + 1);
+    setResult(null);
+    setChosen(null);
+    setUsedHint(false);
+    setPhase("answering");
+    startRef.current = Date.now();
+  }, []);
+
   const exit = () => {
     if (earned.answered === 0) return onExit();
     confirm.confirm({
@@ -320,7 +363,15 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (phase === "feedback" && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
-        next();
+        // 纯拼写判错后 Enter 是「再来一遍」，拼对后才是下一题
+        if (q?.mode === "dictation" && result && !result.correct) retryDictation();
+        else next();
+        return;
+      }
+      if (phase === "answering" && q?.mode === "dictation" && e.key === "Enter") {
+        e.preventDefault();
+        if (dictLocalWrong) retryDictation();
+        else checkDictation();
         return;
       }
       if (phase === "answering" && q?.options && /^[1-4]$/.test(e.key)) {
@@ -330,7 +381,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, q, next, submit]);
+  }, [phase, q, next, submit, result, dictLocalWrong, checkDictation, retryDictation]);
 
   const hintText = useMemo(() => {
     if (!q || q.mode !== "spelling" || !usedHint) return null;
@@ -450,6 +501,12 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   if (!q) return null;
   const modeMeta = MODE_META[q.mode];
   const correctAnswer = result?.correctAnswer;
+  const dictWrong = q.mode === "dictation" && phase === "feedback" && Boolean(result) && !result!.correct;
+  const dictStage: "blind" | "shadow" | "checked" | "correct" = q.mode === "dictation"
+    ? phase === "feedback"
+      ? dictWrong ? "checked" : "correct"
+      : dictLocalWrong ? "checked" : dictAttempt % 2 === 0 ? "shadow" : "blind"
+    : "blind";
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -486,7 +543,19 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         <Prompt q={q} />
 
         {q.mode === "dictation" ? (
-          <DictationArea q={q} disabled={phase !== "answering" || pending} usedHint={usedHint} onUseHint={() => setUsedHint(true)} onSubmit={(answer) => submit(answer)} />
+          <DictationView
+            target={q.word ?? ""}
+            typed={dictTyped}
+            onType={setDictTyped}
+            attempt={dictAttempt}
+            stage={dictStage}
+            locked={phase !== "answering" || pending}
+            pending={pending}
+            meaning={q.meaning}
+            phonetic={q.phonetic}
+            onRetry={retryDictation}
+            onCheck={checkDictation}
+          />
         ) : q.options ? (
           <div className="mt-6 grid gap-2.5 sm:grid-cols-2">
             {q.options.map((opt, i) => {
@@ -555,7 +624,8 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         )}
       </Card>
 
-      {/* Feedback：其他模式答对只显示一行简要反馈并自动进入下一题；纯拼写答对与所有答错都显示完整卡片，手动进入下一题 */}
+      {/* Feedback：其他模式答对只显示一行简要反馈并自动进入下一题；纯拼写答对显示完整详情卡，
+          纯拼写的判错界面由 DictationView 呈现（留在当前单词循环练习） */}
       {phase === "feedback" && result && (result.correct || result.alreadyAnswered) && q.mode !== "dictation" && (
         <div className="mt-3 animate-fade-up">
           <Card className={cn("flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-2 px-5 py-3", result.correct ? "border-leaf-200 bg-leaf-50/60" : "border-slate-100")}>
@@ -584,13 +654,13 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
           <p className="mt-2 text-center text-xs text-slate-400">正在进入下一题…</p>
         </div>
       )}
-      {phase === "feedback" && result && ((!result.correct && !result.alreadyAnswered) || q.mode === "dictation") && (
+      {phase === "feedback" && result && ((!result.correct && !result.alreadyAnswered && q.mode !== "dictation") || (q.mode === "dictation" && result.correct)) && (
         <div className="mt-3 animate-fade-up">
           <Card className={cn("overflow-hidden border-2", result.correct ? "border-leaf-200" : "border-coral-100")}>
             <div className={cn("flex items-center justify-between px-5 py-3 text-sm font-semibold", result.correct ? "bg-leaf-50 text-leaf-700" : "bg-coral-100/60 text-coral-600")}>
               <span className="inline-flex items-center gap-2">
                 {result.correct ? <Check className="h-5 w-5" /> : <X className="h-5 w-5" />}
-                {result.alreadyAnswered ? "这道题已经作答过" : result.correct ? (result.quality === 1 ? "答对了（稍有犹豫）" : "回答正确！") : "答错了，记住它"}
+                {result.correct ? (result.quality === 1 ? "答对了（稍有犹豫）" : "回答正确！") : "这道题已经作答过"}
               </span>
               {!result.alreadyAnswered && (
                 <span className="inline-flex items-center gap-2">
