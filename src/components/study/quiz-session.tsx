@@ -168,7 +168,7 @@ function DictationArea({ q, disabled, usedHint, onUseHint, onSubmit }: { q: Clie
               <span
                 key={i}
                 className={cn(
-                  "grid h-11 w-8 place-items-center rounded-xl border-2 font-mono text-lg font-bold uppercase transition-all sm:h-12 sm:w-9",
+                  "grid h-11 w-8 place-items-center rounded-xl border-2 font-mono text-lg font-bold transition-all sm:h-12 sm:w-9",
                   target.length > 12 && "h-10 w-7 text-base sm:w-8",
                   filled ? "border-ocean-500 bg-ocean-500 text-white shadow-sm" : "border-slate-200 bg-slate-100/80 text-transparent",
                   active && "border-ocean-400 bg-white ring-2 ring-ocean-200",
@@ -294,12 +294,15 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
     }, 100);
   }, [phase, index, total, finish]);
 
-  // 答对（或重复作答）后短暂展示反馈即自动进入下一题，不再手动点「继续」；答错保留完整反馈供复习
+  // 答对（或重复作答）后短暂展示反馈即自动进入下一题，不再手动点「继续」；
+  // 纯拼写（听写）例外：拼完后显示完整单词详情，按键或点「继续」再进入下一题；
+  // 其他模式答错也保留完整反馈供复习
   useEffect(() => {
-    if (phase !== "feedback" || !result || (!result.correct && !result.alreadyAnswered)) return;
+    if (phase !== "feedback" || !result || q?.mode === "dictation") return;
+    if (!result.correct && !result.alreadyAnswered) return;
     const t = setTimeout(next, 1100);
     return () => clearTimeout(t);
-  }, [phase, result, next]);
+  }, [phase, result, next, q?.mode]);
 
   const exit = () => {
     if (earned.answered === 0) return onExit();
@@ -552,8 +555,8 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         )}
       </Card>
 
-      {/* Feedback：答对只显示一行简要反馈并自动进入下一题；答错显示完整卡片供巩固记忆 */}
-      {phase === "feedback" && result && (result.correct || result.alreadyAnswered) && (
+      {/* Feedback：其他模式答对只显示一行简要反馈并自动进入下一题；纯拼写答对与所有答错都显示完整卡片，手动进入下一题 */}
+      {phase === "feedback" && result && (result.correct || result.alreadyAnswered) && q.mode !== "dictation" && (
         <div className="mt-3 animate-fade-up">
           <Card className={cn("flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-2 px-5 py-3", result.correct ? "border-leaf-200 bg-leaf-50/60" : "border-slate-100")}>
             <span className="inline-flex items-center gap-2 text-sm font-semibold text-leaf-700">
@@ -581,7 +584,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
           <p className="mt-2 text-center text-xs text-slate-400">正在进入下一题…</p>
         </div>
       )}
-      {phase === "feedback" && result && !result.correct && !result.alreadyAnswered && (
+      {phase === "feedback" && result && ((!result.correct && !result.alreadyAnswered) || q.mode === "dictation") && (
         <div className="mt-3 animate-fade-up">
           <Card className={cn("overflow-hidden border-2", result.correct ? "border-leaf-200" : "border-coral-100")}>
             <div className={cn("flex items-center justify-between px-5 py-3 text-sm font-semibold", result.correct ? "bg-leaf-50 text-leaf-700" : "bg-coral-100/60 text-coral-600")}>
