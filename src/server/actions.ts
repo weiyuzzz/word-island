@@ -16,6 +16,7 @@ import {
   loginUser,
   registerAndLogin,
 } from "./auth";
+import { backfillAllAudio } from "./audio";
 import { destroySession } from "./session";
 import { sanitizeError, schemas } from "./validate";
 
@@ -186,4 +187,8 @@ export async function adminDeleteUserAction(userId: number) {
 
 export async function listUsersForAdminAction() {
   return run(() => listUsersForAdmin());
+}
+
+export async function backfillAudioAction() {
+  return run(() => backfillAllAudio());
 }

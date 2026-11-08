@@ -1,5 +1,6 @@
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -11,6 +12,23 @@ import {
 } from "drizzle-orm/pg-core";
 import type { EventPayload, RunReportWord } from "@/lib/game/model";
 import type { QuestionRecord } from "@/lib/types";
+
+/** 二进制音频存储 */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+// ---------- 单词发音缓存（按归一化单词 + 口音存储，导入时预取） ----------
+
+export const wordAudio = pgTable("word_audio", {
+  wordKey: text("word_key").notNull(),
+  accent: text("accent").notNull().default("us"), // us | uk
+  audio: bytea("audio").notNull(),
+  contentType: text("content_type").notNull().default("audio/mpeg"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("word_audio_key_accent_idx").on(t.wordKey, t.accent)]);
 
 // ---------- 账号 ----------
 

@@ -23,6 +23,7 @@ import { BUILTIN_DECKS, rowToWord } from "@/data/vocabulary";
 import { INITIAL_CABIN_SLOT } from "@/lib/game/buildings";
 import { levelFromXp } from "@/lib/game/economy";
 import { normalizeWord } from "@/lib/utils";
+import { prefetchAudioInBackground } from "./audio";
 import { createSession, hashPassword, requireAdmin, verifyPassword } from "./session";
 import { ensureSeeded } from "./player";
 
@@ -72,6 +73,8 @@ async function seedUserGames(tx: Parameters<Parameters<typeof db.transaction>[0]
     });
     await tx.insert(words).values(rows).onConflictDoNothing();
   }
+  // 预取内置词库发音（后台执行，不阻塞注册）
+  prefetchAudioInBackground(BUILTIN_DECKS.flatMap((d) => d.words.map((w) => rowToWord(w).word)));
 }
 
 /**

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gt, ilike, or, sql } from "drizzle-orm";
 import { parseImport, toCsv, toJson, type ImportFormat, type WordInput } from "@/lib/vocab/parse";
 import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { normalizeWord } from "@/lib/utils";
+import { prefetchAudioInBackground } from "./audio";
 import { ensureSeeded } from "./player";
 import { currentUserId } from "./session";
 
@@ -164,6 +165,7 @@ export async function addWord(deckId: number, input: WordInput): Promise<number>
     .onConflictDoNothing()
     .returning({ id: words.id });
   if (inserted.length === 0) throw new Error(`「${clean.word}」已经在这个词库中了`);
+  prefetchAudioInBackground([clean.word]);
   return inserted[0].id;
 }
 
@@ -229,6 +231,8 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
     for (let i = 0; i < toInsert.length; i += 200) {
       await tx.insert(words).values(toInsert.slice(i, i + 200)).onConflictDoNothing();
     }
+    // 后台预取本次导入单词的发音（不阻塞返回；漏拉的会在播放时按需补拉）
+    prefetchAudioInBackground(toInsert.map((w) => w.word));
     return {
       deckId,
       deckName,

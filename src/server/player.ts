@@ -233,6 +233,14 @@ export async function ensureSeeded(): Promise<void> {
         chests_found integer not null default 0,
         last_run_at timestamptz
       );
+      create table if not exists word_audio (
+        word_key text not null,
+        accent text not null default 'us',
+        audio bytea not null,
+        content_type text not null default 'audio/mpeg',
+        created_at timestamptz not null default now(),
+        primary key (word_key, accent)
+      );
     `);
     // 给老库补 user_id 列，以及原先作为主键、现在改为普通列的 id
     for (const table of ["players", "decks", "words", "word_progress", "review_logs", "study_sessions", "daily_stats", "buildings", "task_claims", "achievements", "explorations", "player_quests", "inventory", "purchases", "region_progress"]) {

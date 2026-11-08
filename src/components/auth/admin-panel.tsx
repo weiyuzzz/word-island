@@ -2,9 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, ShieldCheck, Trash2, UserPlus } from "lucide-react";
+import { AudioLines, KeyRound, ShieldCheck, Trash2, UserPlus } from "lucide-react";
 import type { AdminUserRow } from "@/server/auth";
-import { adminCreateUserAction, adminDeleteUserAction, adminResetPasswordAction } from "@/server/actions";
+import { adminCreateUserAction, adminDeleteUserAction, adminResetPasswordAction, backfillAudioAction } from "@/server/actions";
 import { Button, Card, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 
@@ -16,7 +16,17 @@ export function AdminPanel({ currentUserId, initialUsers }: { currentUserId: num
   const [newName, setNewName] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [pwd, setPwd] = useState<Record<number, string>>({});
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const backfill = () => {
+    setBackfillMsg("正在补齐，视词库大小需要一到几分钟…");
+    startTransition(async () => {
+      const res = await backfillAudioAction();
+      if (!res.ok) return setBackfillMsg(res.error);
+      setBackfillMsg(`补齐完成：本次下载 ${res.data.fetched} 个，此前已缓存 ${res.data.cached} 个，失败 ${res.data.failed.length} 个`);
+    });
+  };
 
   const reload = () => {
     router.refresh();
@@ -69,6 +79,19 @@ export function AdminPanel({ currentUserId, initialUsers }: { currentUserId: num
         </h1>
         <p className="mt-1 text-sm text-slate-500">管理本站账号：创建用户、重置密码、删除用户。每个用户拥有独立的词库与学习进度。</p>
       </div>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">单词发音缓存</div>
+            <p className="mt-1 text-xs text-slate-500">把词库中所有单词的发音预先下载到数据库，播放不再依赖在线接口（导入时会自动预取，这里可手动补齐存量）。</p>
+          </div>
+          <Button icon={<AudioLines className="h-4 w-4" />} loading={pending} onClick={backfill}>
+            补齐全部发音
+          </Button>
+        </div>
+        {backfillMsg && <p className="mt-3 rounded-xl bg-ocean-50 px-3 py-2 text-xs text-ocean-700">{backfillMsg}</p>}
+      </Card>
 
       <Card className="p-5">
         <div className="text-sm font-semibold">新建账号</div>
