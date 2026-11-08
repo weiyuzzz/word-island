@@ -174,7 +174,10 @@ export function EmptyState({ icon, title, description, action, className }: { ic
 }
 
 // ---------- Speak ----------
-export function speak(text: string) {
+let audioEl: HTMLAudioElement | null = null;
+let speakSeq = 0;
+
+function fallbackSpeak(text: string): boolean {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
   try {
     window.speechSynthesis.cancel();
@@ -188,6 +191,34 @@ export function speak(text: string) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * 单词发音：走同源代理 /api/tts（服务端转发有道词典高品质发音，美音/英音可选），
+ * 代理不可用（如断网）时自动回退到系统 TTS。
+ */
+export function speak(text: string, accent: "us" | "uk" = "us") {
+  if (typeof window === "undefined") return false;
+  const word = text.trim();
+  if (!word) return false;
+  const seq = ++speakSeq;
+  try {
+    if (!audioEl) audioEl = new Audio();
+    const audio = audioEl;
+    audio.pause();
+    audio.src = `/api/tts?word=${encodeURIComponent(word)}&accent=${accent}`;
+    audio.currentTime = 0;
+    audio.onerror = () => {
+      if (seq === speakSeq) fallbackSpeak(word);
+    };
+    const playing = audio.play();
+    if (playing) playing.catch(() => {
+      if (seq === speakSeq) fallbackSpeak(word);
+    });
+    return true;
+  } catch {
+    return fallbackSpeak(word);
   }
 }
 

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // 未登录访问任何页面都跳到 /login；登录后由各页面自行渲染。
 // 仅检查 cookie 是否存在，会话有效性在服务端（session.ts）再校验。
-const PUBLIC_PREFIXES = ["/login", "/api/health"];
+const PUBLIC_PREFIXES = ["/login", "/api/health", "/api/tts"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
