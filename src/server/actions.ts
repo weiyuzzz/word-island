@@ -5,9 +5,9 @@ import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { claimLoginReward, updateDailyGoal } from "./dashboard";
 import { buildAt, buyTheme, claimIsleReward, lighthouseCheckIn, moveBuilding, placeFromInventory, removeBuilding, upgradeBuilding, windmillHarvest } from "./island";
 import { getRaidDetail, resolveRaidWave } from "./island-raid";
-import { createSession, finishSession, submitAnswer } from "./study";
+import { createSession, finishSession, selfAssess, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
-import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, shareDeck, updateWord } from "./vocab";
+import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, restoreBuiltinDeck, shareDeck, updateWord } from "./vocab";
 import { exportProgress } from "./backup";
 import {
   adminCreateUser,
@@ -61,6 +61,12 @@ export async function finishSessionAction(sessionId: number) {
   const parsed = schemas.finishSession.safeParse(sessionId);
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => finishSession(parsed.data));
+}
+
+export async function selfAssessAction(input: { wordId: number; grade: "familiar" | "ok" | "forgotten" }) {
+  const parsed = schemas.selfAssess.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => selfAssess(parsed.data.wordId, parsed.data.grade));
 }
 
 // ---------- 任务 / 奖励 ----------
@@ -164,6 +170,12 @@ export async function deleteDeckAction(id: number) {
   const parsed = schemas.deleteDeck.safeParse(id);
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => deleteDeck(parsed.data));
+}
+
+export async function restoreBuiltinDeckAction(slug: string) {
+  const parsed = schemas.restoreBuiltinDeck.safeParse(slug);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => restoreBuiltinDeck(parsed.data));
 }
 
 export async function addWordAction(deckId: number, input: WordInput) {

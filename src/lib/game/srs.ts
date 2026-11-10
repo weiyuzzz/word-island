@@ -97,7 +97,7 @@ export function gradeAnswer(correct: boolean, mode: QuizMode, responseMs: number
   return 2;
 }
 
-function resolveStatus(prev: WordStatus, next: Omit<ProgressState, "status">): WordStatus {
+export function resolveStatus(prev: WordStatus, next: Omit<ProgressState, "status">): WordStatus {
   if (
     next.proficiency >= MASTERY_RULE.proficiency &&
     next.streak >= MASTERY_RULE.streak &&

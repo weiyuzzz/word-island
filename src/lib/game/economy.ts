@@ -89,5 +89,6 @@ export function sessionBonus(input: SessionBonusInput): { coins: number; xp: num
 }
 
 export const LOGIN_REWARD = { coins: 15, xp: 5 } as const;
-export const SESSION_SIZES = [10, 15, 20] as const;
+export const SESSION_SIZES = [10, 30, 50, 100] as const;
+export const SESSION_SIZE_MAX = 200;
 export const DAILY_GOAL_OPTIONS = [20, 30, 50, 80] as const;

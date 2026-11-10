@@ -166,6 +166,7 @@ Serendipity,,n.,重复,,,
     expect(decks.find((d) => d.id === result.deckId)?.total).toBe(3);
     await deleteDeck(result.deckId);
     expect((await listDecks()).some((d) => d.id === result.deckId)).toBe(false);
-    await expect(deleteDeck(decks.find((d) => d.kind === "builtin")!.id)).rejects.toThrow("内置");
+    // 删除不存在的词库应报错（内置词库现已允许删除）
+    await expect(deleteDeck(result.deckId)).rejects.toThrow("词库不存在");
   });
 });

@@ -1,8 +1,9 @@
+import { SESSION_SIZE_MAX } from "@/lib/game/economy";
 import { db } from "@/db";
 import { decks, players, reviewLogs, studySessions, wordProgress, words } from "@/db/schema";
 import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { answerReward, levelFromXp, sessionBonus } from "@/lib/game/economy";
-import { applyReview, chooseMode, gradeAnswer, initialProgress, type ProgressState } from "@/lib/game/srs";
+import { applyReview, chooseMode, gradeAnswer, initialProgress, INTERVAL_LADDER_MINUTES, MASTERED_MIN_INTERVAL, resolveStatus, type ProgressState } from "@/lib/game/srs";
 import type {
   AnswerResult,
   ClientQuestion,
@@ -116,7 +117,7 @@ export interface CreateSessionInput {
 export async function createSession(input: CreateSessionInput): Promise<ClientSession> {
   await ensureSeeded();
   const uid = await currentUserId();
-  const size = Math.min(30, Math.max(5, Math.round(input.size || 10)));
+  const size = Math.min(SESSION_SIZE_MAX, Math.max(5, Math.round(input.size || 10)));
   const now = new Date();
   const deckFilter = input.deckId ? and(eq(words.deckId, input.deckId), eq(words.userId, uid)) : eq(words.userId, uid);
 
@@ -469,3 +470,85 @@ export async function countDue(deckId: number | null = null): Promise<{ due: num
 }
 
 export type { QuizMode };
+
+// ---------- 答题后主观反馈：熟悉 / 一般 / 遗忘 ----------
+
+export type SelfGrade = "familiar" | "ok" | "forgotten";
+
+export interface SelfAssessResult {
+  status: WordStatus;
+  proficiency: number;
+  nextReviewAt: string | null;
+}
+
+/** 把间隔分钟数定位到阶梯档位 */
+function stageForInterval(intervalMinutes: number): number {
+  let stage = 0;
+  for (let i = 0; i < INTERVAL_LADDER_MINUTES.length; i++) {
+    if (INTERVAL_LADDER_MINUTES[i] <= intervalMinutes) stage = i;
+  }
+  return stage;
+}
+
+/**
+ * 用户自评调整复习计划（在原有 SRS 结果之上的增量修正）：
+ * - familiar 熟悉：熟练度 +15、间隔上移一档（可能提前进入掌握）
+ * - ok 一般：维持原有计划不变
+ * - forgotten 遗忘：视为一次 lapse——熟练度 -30、间隔回到 10 分钟、状态下调
+ * 不选择时什么都不发生，完全保留原有 SRS 结果。
+ */
+export async function selfAssess(wordId: number, grade: SelfGrade): Promise<SelfAssessResult | null> {
+  const uid = await currentUserId();
+  return db.transaction(async (tx) => {
+    const [p] = await tx
+      .select()
+      .from(wordProgress)
+      .where(and(eq(wordProgress.wordId, wordId), eq(wordProgress.userId, uid)))
+      .for("update");
+    if (!p) return null;
+    const prev = toState(p);
+    if (grade === "ok") {
+      return { status: prev.status, proficiency: prev.proficiency, nextReviewAt: prev.nextReviewAt?.toISOString() ?? null };
+    }
+    const now = new Date();
+    let next: ProgressState;
+    if (grade === "familiar") {
+      const proficiency = Math.min(100, prev.proficiency + 15);
+      const streak = prev.streak + 1;
+      const stage = Math.min(INTERVAL_LADDER_MINUTES.length - 1, stageForInterval(prev.intervalMinutes) + 1);
+      const intervalMinutes = INTERVAL_LADDER_MINUTES[stage];
+      const partial = { proficiency, streak, correctCount: prev.correctCount, wrongCount: prev.wrongCount, lapses: prev.lapses, intervalMinutes, nextReviewAt: null, lastReviewedAt: now };
+      const status = resolveStatus(prev.status, partial);
+      const finalInterval = status === "mastered" ? Math.max(intervalMinutes, MASTERED_MIN_INTERVAL) : intervalMinutes;
+      next = { ...partial, status, intervalMinutes: finalInterval, nextReviewAt: new Date(now.getTime() + finalInterval * 60_000) };
+    } else {
+      const proficiency = Math.max(0, prev.proficiency - 30);
+      const partial = {
+        proficiency,
+        streak: 0,
+        correctCount: prev.correctCount,
+        wrongCount: prev.wrongCount,
+        lapses: prev.status !== "new" ? prev.lapses + 1 : prev.lapses,
+        intervalMinutes: INTERVAL_LADDER_MINUTES[0],
+        nextReviewAt: null,
+        lastReviewedAt: now,
+      };
+      const status = resolveStatus(prev.status, partial);
+      next = { ...partial, status, nextReviewAt: new Date(now.getTime() + INTERVAL_LADDER_MINUTES[0] * 60_000) };
+    }
+    await tx
+      .update(wordProgress)
+      .set({
+        status: next.status,
+        proficiency: next.proficiency,
+        streak: next.streak,
+        lapses: next.lapses,
+        intervalMinutes: next.intervalMinutes,
+        lastReviewedAt: now,
+        nextReviewAt: next.nextReviewAt,
+        masteredAt: next.status === "mastered" ? sql`coalesce(${wordProgress.masteredAt}, ${now.toISOString()}::timestamptz)` : null,
+      })
+      .where(eq(wordProgress.id, p.id));
+    return { status: next.status, proficiency: next.proficiency, nextReviewAt: next.nextReviewAt?.toISOString() ?? null };
+  });
+}

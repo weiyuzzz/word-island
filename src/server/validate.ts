@@ -18,7 +18,7 @@ export const schemas = {
   startSession: z.object({
     deckId: z.number().int().positive().nullable(),
     kind: SESSION_KIND,
-    size: z.number().int().min(1).max(50),
+    size: z.number().int().min(1).max(200),
   }),
   answer: z.object({
     sessionId: z.number().int().positive(),
@@ -153,6 +153,11 @@ export const schemas = {
     text: z.string().min(1).max(200000),
   }),
   ingestSource: z.enum(["conversation", "guardian", "bbc", "news"]),
+  selfAssess: z.object({
+    wordId: z.number().int().positive(),
+    grade: z.enum(["familiar", "ok", "forgotten"]),
+  }),
+  restoreBuiltinDeck: z.string().trim().min(1).max(40),
 };
 
 export const gameSchemas = {

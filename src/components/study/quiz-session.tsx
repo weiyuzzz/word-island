@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { ArrowRight, Check, Flame, Lightbulb, RotateCcw, Sparkles, TreePalm, Trophy, X, Zap, House, CalendarCheck } from "lucide-react";
 import type { AnswerResult, ClientQuestion, ClientSession, SessionSummary } from "@/lib/types";
 import { MODE_META, STATUS_META } from "@/lib/game/srs";
 import { cn, findWordInSentence, formatRelativeTime } from "@/lib/utils";
-import { answerAction, finishSessionAction } from "@/server/actions";
+import { answerAction, finishSessionAction, selfAssessAction } from "@/server/actions";
 import { Button, Card, CoinIcon, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 
@@ -14,6 +14,82 @@ interface Props {
   session: ClientSession;
   onExit: () => void;
   onRestart: () => void;
+}
+
+// ---------- 主观反馈（熟悉/一般/遗忘） ----------
+
+const ASSESS_PREF_KEY = "word-island:self-assess-off";
+
+function getAssessPref(): boolean {
+  try {
+    return localStorage.getItem(ASSESS_PREF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function subscribeAssessPref(onChange: () => void): () => void {
+  window.addEventListener("wi-assess-pref", onChange);
+  return () => window.removeEventListener("wi-assess-pref", onChange);
+}
+
+function setAssessPref(off: boolean) {
+  try {
+    localStorage.setItem(ASSESS_PREF_KEY, off ? "1" : "0");
+  } catch {}
+  window.dispatchEvent(new Event("wi-assess-pref"));
+}
+
+const ASSESS_OPTIONS: { grade: "familiar" | "ok" | "forgotten"; label: string; cls: string }[] = [
+  { grade: "familiar", label: "熟悉", cls: "border-leaf-300 text-leaf-700 hover:bg-leaf-50" },
+  { grade: "ok", label: "一般", cls: "border-slate-200 text-slate-600 hover:bg-slate-50" },
+  { grade: "forgotten", label: "遗忘", cls: "border-coral-300 text-coral-600 hover:bg-coral-50" },
+];
+
+/** 答题后的主观反馈行：影响后续复习计划；不评价则保持原计划 */
+function SelfAssessRow({ wordId, onDone, onNext }: { wordId: number; onDone: () => void; onNext?: () => void }) {
+  const toast = useToast();
+  const [pending, startTransition] = useTransition();
+  const send = (grade: "familiar" | "ok" | "forgotten", label: string) => {
+    startTransition(async () => {
+      const res = await selfAssessAction({ wordId, grade });
+      if (res.ok && grade !== "ok") {
+        toast({ kind: "success", title: `已标记「${label}」`, description: res.data ? `下次复习 ${formatRelativeTime(res.data.nextReviewAt)}` : undefined });
+      }
+      onDone();
+      onNext?.();
+    });
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-50 px-3.5 py-2.5">
+      <span className="text-xs text-slate-500">这个单词你觉得？<span className="hidden sm:inline">（影响下次复习时间，可跳过）</span></span>
+      <span className="flex items-center gap-1.5">
+        {ASSESS_OPTIONS.map((o) => (
+          <button
+            key={o.grade}
+            type="button"
+            disabled={pending}
+            onClick={() => send(o.grade, o.label)}
+            className={cn("rounded-full border-2 px-3 py-1 text-xs font-semibold transition disabled:opacity-50", o.cls)}
+          >
+            {o.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            setAssessPref(true);
+            toast({ kind: "info", title: "已关闭主观反馈", description: "答题后将按原计划自动推进；可在学习页重新开启" });
+            onDone();
+            onNext?.();
+          }}
+          className="ml-1 rounded-full px-2 py-1 text-xs text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+        >
+          不再提示
+        </button>
+      </span>
+    </div>
+  );
 }
 
 function HighlightedExample({ word, example }: { word: string; example: string }) {
@@ -270,8 +346,12 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   const [dictAttempt, setDictAttempt] = useState(1);
   const [dictLocalWrong, setDictLocalWrong] = useState(false);
   const [dictIndex, setDictIndex] = useState(index);
+  /** 主观反馈：本题已评过（每题只评一次） */
+  const [assessedIndex, setAssessedIndex] = useState<number | null>(null);
   const startRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** 「不再提示」偏好（localStorage 持久化） */
+  const assessOff = useSyncExternalStore(subscribeAssessPref, getAssessPref, () => false);
 
   const q = session.questions[index];
   const total = session.total;
@@ -346,13 +426,16 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
   // 答对（或重复作答）后短暂展示反馈即自动进入下一题，不再手动点「继续」；
   // 纯拼写（听写）例外：拼完后显示完整单词详情，按键或点「继续」再进入下一题；
-  // 其他模式答错也保留完整反馈供复习
+  // 其他模式答错也保留完整反馈供复习；
+  // 主观反馈开启且本题未评价时暂停自动前进，等用户选择（或点「不再提示」）
+  const showAssess = !assessOff && result != null && !result.alreadyAnswered && assessedIndex !== index && phase === "feedback";
   useEffect(() => {
     if (phase !== "feedback" || !result || q?.mode === "dictation") return;
     if (!result.correct && !result.alreadyAnswered) return;
+    if (showAssess) return;
     const t = setTimeout(next, 1100);
     return () => clearTimeout(t);
-  }, [phase, result, next, q?.mode]);
+  }, [phase, result, next, q?.mode, showAssess]);
 
   // 纯拼写：提交当前输入。第 1 遍交给服务端判定并记入 SRS；之后的尝试先在
   // 本地比对，只有拼对才提交（服务端判重不重复发奖，但会按实际作答返回 correct）
@@ -682,7 +765,13 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
               )}
             </span>
           </Card>
-          <p className="mt-2 text-center text-xs text-slate-400">正在进入下一题…</p>
+          {showAssess ? (
+            <div className="mt-2">
+              <SelfAssessRow wordId={result.word.id} onDone={() => setAssessedIndex(index)} onNext={next} />
+            </div>
+          ) : (
+            <p className="mt-2 text-center text-xs text-slate-400">正在进入下一题…</p>
+          )}
         </div>
       )}
       {phase === "feedback" && result && ((!result.correct && !result.alreadyAnswered && q.mode !== "dictation") || (q.mode === "dictation" && result.correct)) && (
@@ -743,6 +832,11 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
               )}
             </div>
           </Card>
+          {showAssess && (
+            <div className="mt-3">
+              <SelfAssessRow wordId={result.word.id} onDone={() => setAssessedIndex(index)} />
+            </div>
+          )}
           <Button size="lg" className="mt-3 w-full" loading={pending} onClick={next} icon={index + 1 >= total ? <Trophy className="h-5 w-5" /> : <ArrowRight className="h-5 w-5" />}>
             {index + 1 >= total ? "查看成绩" : "继续"}
             <span className="ml-1 hidden text-xs font-normal opacity-70 sm:inline">（Enter）</span>

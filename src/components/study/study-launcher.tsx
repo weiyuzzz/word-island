@@ -30,6 +30,7 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
   const [deckId, setDeckId] = useState<number | null>(initialDeckId);
   const [kind, setKind] = useState<SessionKind>(initialKind);
   const [size, setSize] = useState<number>(10);
+  const [customSize, setCustomSize] = useState<string>("");
   const [session, setSession] = useState<ClientSession | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -125,13 +126,31 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
       <section className="flex flex-wrap items-center gap-4">
         <div>
           <div className="mb-2 text-sm font-semibold text-slate-600">每组题数</div>
-          <div className="inline-flex rounded-2xl bg-white p-1 shadow-soft">
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-2xl bg-white p-1 shadow-soft">
             {SESSION_SIZES.map((s) => (
-              <button key={s} type="button" onClick={() => setSize(s)} className={cn("h-9 rounded-xl px-4 text-sm font-medium transition", size === s ? "bg-ocean-500 text-white" : "text-slate-500 hover:bg-slate-100")}>
+              <button key={s} type="button" onClick={() => { setSize(s); setCustomSize(""); }} className={cn("h-9 rounded-xl px-4 text-sm font-medium transition", size === s ? "bg-ocean-500 text-white" : "text-slate-500 hover:bg-slate-100")}>
                 {s}
               </button>
             ))}
+            <input
+              value={customSize}
+              onChange={(e) => {
+                const v = e.target.value.replace(/\D/g, "").slice(0, 3);
+                setCustomSize(v);
+                const n = Number(v);
+                if (n >= 5 && n <= 200) setSize(n);
+              }}
+              placeholder="自定义"
+              inputMode="numeric"
+              className={cn(
+                "h-9 w-20 rounded-xl border px-2 text-center text-sm font-medium outline-none transition",
+                customSize && size === Number(customSize) ? "border-ocean-500 bg-ocean-50 text-ocean-600" : "border-slate-200",
+              )}
+            />
           </div>
+          {customSize && (Number(customSize) < 5 || Number(customSize) > 200) && (
+            <p className="mt-1.5 text-xs text-coral-500">自定义题数需在 5-200 之间</p>
+          )}
         </div>
         <div className="ml-auto">
           <Button size="lg" icon={<Play className="h-5 w-5" />} loading={pending} onClick={start} className="w-full sm:w-auto">

@@ -1,6 +1,7 @@
 import { db } from "@/db";
-import { decks, wordProgress, words } from "@/db/schema";
-import { and, asc, desc, eq, gt, ilike, or, sql } from "drizzle-orm";
+import { articleNotes, decks, wordProgress, words } from "@/db/schema";
+import { and, asc, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
+import { BUILTIN_DECKS, rowToWord } from "@/data/vocabulary";
 import { parseImport, toCsv, toJson, type ImportFormat, type WordInput } from "@/lib/vocab/parse";
 import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { normalizeWord } from "@/lib/utils";
@@ -124,12 +125,54 @@ export async function createDeck(name: string, description = ""): Promise<{ id: 
   return { id: deck.id, name: deck.name };
 }
 
+/**
+ * 删除词书（含内置词库）。
+ * 联动影响：
+ * - words 按 FK 级联删除 → wordProgress（学习进度/间隔计划）级联消失 → reviewLogs 级联消失
+ * - studySessions 只保留 deckId 数字（无外键），deckName 文本保留，历史场次仍可读
+ * - 群岛的解锁进度基于内置词库的已学词数，删除内置词书会导致对应邻岛回落锁定（重新学习后可再解锁）
+ * - articleNotes.wordId 是无外键的软引用，删除词书后置空避免悬垂
+ */
 export async function deleteDeck(id: number): Promise<void> {
   const uid = await currentUserId();
-  const [deck] = await db.select().from(decks).where(and(eq(decks.id, id), eq(decks.userId, uid)));
-  if (!deck) throw new Error("词库不存在");
-  if (deck.kind === "builtin") throw new Error("内置词库不能删除");
-  await db.delete(decks).where(eq(decks.id, id));
+  await db.transaction(async (tx) => {
+    const [deck] = await tx.select().from(decks).where(and(eq(decks.id, id), eq(decks.userId, uid)));
+    if (!deck) throw new Error("词库不存在");
+    // 该词书下笔记的 wordId 软引用置空（笔记本身保留，只是断开与单词的关联）
+    const wordIds = await tx.select({ id: words.id }).from(words).where(eq(words.deckId, id));
+    if (wordIds.length > 0) {
+      await tx
+        .update(articleNotes)
+        .set({ wordId: null })
+        .where(and(eq(articleNotes.userId, uid), inArray(articleNotes.wordId, wordIds.map((w) => w.id))));
+    }
+    await tx.delete(decks).where(eq(decks.id, id));
+  });
+}
+
+/** 恢复内置词书：按官方词表重新播种（学习进度从零开始） */
+export async function restoreBuiltinDeck(slug: string): Promise<{ deckId: number; wordCount: number }> {
+  const uid = await currentUserId();
+  const def = BUILTIN_DECKS.find((d) => d.slug === slug);
+  if (!def) throw new Error("没有这个内置词书");
+  const [existing] = await db.select({ id: decks.id }).from(decks).where(and(eq(decks.userId, uid), eq(decks.slug, slug)));
+  if (existing) throw new Error(`「${def.name}」已经存在，无需恢复`);
+  const deckWords = def.words.map(rowToWord);
+  const deckId = await db.transaction(async (tx) => {
+    const [deck] = await tx
+      .insert(decks)
+      .values({ userId: uid, slug: def.slug, name: def.name, description: def.description, kind: "builtin", color: def.color })
+      .returning();
+    for (let i = 0; i < deckWords.length; i += 200) {
+      await tx
+        .insert(words)
+        .values(deckWords.slice(i, i + 200).map((w) => ({ userId: uid, deckId: deck.id, wordKey: normalizeWord(w.word), ...w })))
+        .onConflictDoNothing();
+    }
+    return deck.id;
+  });
+  prefetchAudioInBackground(deckWords.map((w) => w.word));
+  return { deckId, wordCount: deckWords.length };
 }
 
 function validateInput(input: WordInput): WordInput {

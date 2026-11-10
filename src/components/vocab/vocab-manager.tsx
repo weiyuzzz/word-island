@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { AlertCircle, BookOpen, Download, FolderPlus, Loader2, Pencil, Play, Plus, Search, Share2, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, BookOpen, Download, FolderPlus, Loader2, Pencil, Play, Plus, RotateCcw, Search, Share2, Trash2, Upload, X } from "lucide-react";
 import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { STATUS_META, proficiencyLabel } from "@/lib/game/srs";
+import { BUILTIN_DECKS } from "@/data/vocabulary";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { cn, formatRelativeTime, percent } from "@/lib/utils";
-import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, shareDeckAction, updateWordAction } from "@/server/actions";
+import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, restoreBuiltinDeckAction, shareDeckAction, updateWordAction } from "@/server/actions";
 import { Button, Card, EmptyState, Modal, Pill, ProgressBar, STATUS_TONE, SpeakButton, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { ImportDialog } from "./import-dialog";
@@ -113,9 +114,11 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
 
   const removeDeck = () => {
     if (!deck) return;
+    const isBuiltin = deck.kind === "builtin";
+    const isleNote = isBuiltin ? "注意：群岛的邻岛解锁进度基于内置词书的已学词数，删除后对应邻岛会回落到锁定状态（重新学满后可再次解锁）。" : "";
     confirm.confirm({
-      title: `删除词库「${deck.name}」`,
-      description: `确定删除词库「${deck.name}」及其 ${deck.total} 个单词吗？学习记录也会一并删除。`,
+      title: `删除词书「${deck.name}」`,
+      description: `将永久删除词书里的 ${deck.total} 个单词，以及它们的学习进度、间隔复习计划和答题记录，且无法恢复。历史学习场次会保留（只显示词书名）。${isleNote}删除后可用「恢复内置词书」按官方词表重新导入（进度从零开始）。`,
       confirmLabel: "删除",
       variant: "danger",
       onConfirm: () => {
@@ -124,9 +127,19 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
           if (!res.ok) return toast({ kind: "error", title: res.error });
           await refreshDecks();
           setDeckId(decks.find((d) => d.id !== deck.id)?.id ?? null);
-          toast({ kind: "info", title: "词库已删除" });
+          toast({ kind: "info", title: "词书已删除" });
         });
       },
+    });
+  };
+
+  const restoreDeck = (slug: string, name: string) => {
+    startTransition(async () => {
+      const res = await restoreBuiltinDeckAction(slug);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      await refreshDecks();
+      setDeckId(res.data.deckId);
+      toast({ kind: "success", title: `已恢复「${name}」`, description: `重新导入 ${res.data.wordCount} 个单词，学习进度从零开始` });
     });
   };
 
@@ -232,6 +245,23 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
               <DeckItem d={d} />
             </div>
           ))}
+          {BUILTIN_DECKS.filter((def) => !decks.some((d) => d.slug === def.slug)).map((def) => (
+            <div key={def.slug} className="w-56 shrink-0 lg:w-auto">
+              <button
+                type="button"
+                onClick={() => restoreDeck(def.slug, def.name)}
+                className="w-full rounded-2xl border border-dashed border-slate-200 p-3 text-left transition hover:border-ocean-300"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-slate-400">{def.name}</span>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-ocean-600">
+                    <RotateCcw className="h-3 w-3" /> 恢复
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">已删除 · 点击按官方词表重新导入（进度从零开始）</div>
+              </button>
+            </div>
+          ))}
           <div className="hidden pt-2 text-xs font-semibold uppercase tracking-wider text-slate-400 lg:block">自定义词库</div>
           {custom.map((d) => (
             <div key={d.id} className="w-56 shrink-0 lg:w-auto">
@@ -279,7 +309,7 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
                     JSON
                   </Button>
                   {isCustom && <Button size="sm" variant="secondary" icon={<Share2 className="h-4 w-4" />} onClick={shareCustomDeck} disabled={pending}>分享</Button>}
-                  {isCustom && <Button size="sm" variant="ghost" aria-label="删除词库" icon={<Trash2 className="h-4 w-4 text-coral-500" />} onClick={removeDeck} />}
+                  <Button size="sm" variant="ghost" aria-label={isCustom ? "删除词库" : "删除词书"} title={isCustom ? "删除词库" : "删除词书（含进度，详见删除确认说明）"} icon={<Trash2 className="h-4 w-4 text-coral-500" />} onClick={removeDeck} />
                 </div>
               </div>
             </Card>
