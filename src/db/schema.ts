@@ -11,7 +11,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { EventPayload, RunReportWord } from "@/lib/game/model";
-import type { QuestionRecord } from "@/lib/types";
+import type { QuestionRecord, RaidWave } from "@/lib/types";
 
 /** 二进制音频存储 */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -382,6 +382,27 @@ export const articleHighlights = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("article_highlights_user_article_idx").on(t.userId, t.articleId)],
+);
+
+/** 岛屿保卫战：每日怪物潮（惰性生成，答题击退） */
+export const islandRaids = pgTable(
+  "island_raids",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id"),
+    /** 生成日期 YYYY-MM-DD，每天最多一场 */
+    day: text("day").notNull(),
+    waves: jsonb("waves").$type<RaidWave[]>().notNull(),
+    status: text("status").notNull().default("active"), // active | won | lost
+    wavesTotal: integer("waves_total").notNull().default(0),
+    wavesResolved: integer("waves_resolved").notNull().default(0),
+    hearts: integer("hearts").notNull().default(3),
+    maxHearts: integer("max_hearts").notNull().default(3),
+    coinsEarned: integer("coins_earned").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("island_raids_user_day_idx").on(t.userId, t.day)],
 );
 
 /** 阅读笔记：表达 / 词组 / 语法 / 长难句，note_key 用于复现归并 */

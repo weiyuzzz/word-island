@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
-import { ArrowUpCircle, Box, Check, Hammer, LayoutGrid, Lock, Move, PackageOpen, Store, Trash2, X, Zap, Sparkles, GraduationCap } from "lucide-react";
-import { BUILDING_CATALOG, ISLAND_SLOTS, canPlaceOnSlot, getBuildingDef, maxLevel, upgradeCost, type BuildingDef, type IslandSlot } from "@/lib/game/buildings";
-import type { BuildingView, IslandState } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { ArrowUpCircle, BookOpen, Box, Check, Crown, Flame, Hammer, Landmark, LayoutGrid, Lock, Move, PackageOpen, Palette, Shield, Store, Trash2, Users, X, Zap, Sparkles, GraduationCap, Wind } from "lucide-react";
+import { BUILDING_CATALOG, ISLAND_SLOTS, ISLAND_THEMES, canPlaceOnSlot, getBuildingDef, isSlotUnlocked, maxLevel, slotUnlockLabel, upgradeCost, type BuildingDef, type IslandSlot } from "@/lib/game/buildings";
+import type { BuildingView, IslandResident, IslandState, RaidWave } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { buildAction, moveBuildingAction, placeFromInventoryAction, removeBuildingAction, upgradeAction } from "@/server/actions";
+import { buildAction, buyThemeAction, claimIsleRewardAction, lighthouseCheckInAction, moveBuildingAction, placeFromInventoryAction, removeBuildingAction, resolveRaidWaveAction, upgradeAction, windmillHarvestAction } from "@/server/actions";
+import { RaidModal } from "./raid-modal";
 import { Button, Card, CoinIcon, Pill, ProgressBar, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { BuildingArt, BuildingPreview } from "./building-art";
@@ -31,6 +33,13 @@ function Cloud({ x, y, s, delay }: { x: number; y: number; s: number; delay: str
   );
 }
 
+/** 岛屿主题配色（平面渲染） */
+export const THEME_PALETTE: Record<string, { sea: [string, string]; shallow: string; grass: [string, string]; sand: string; cardBg: string; sun: string }> = {
+  tropical: { sea: ["#c9e9fb", "#7fc2ee"], shallow: "#bfe6f7", grass: ["#a8dc92", "#7cc46f"], sand: "#f1dfb3", cardBg: "bg-ocean-100", sun: "#ffe28a" },
+  aurora: { sea: ["#c9dcf0", "#6e9bc9"], shallow: "#d8e6f2", grass: ["#f0f7fb", "#b9d3e0"], sand: "#dce6ee", cardBg: "bg-slate-200", sun: "#f4f9ff" },
+  sunset: { sea: ["#ffe3c2", "#f2a65e"], shallow: "#ffd9a8", grass: ["#b8d78f", "#8fbf6e"], sand: "#f7dfae", cardBg: "bg-sun-100", sun: "#ffb64d" },
+};
+
 interface SceneProps {
   buildings: BuildingView[];
   selectedId: number | null;
@@ -38,34 +47,40 @@ interface SceneProps {
   popId: number | null;
   onSlotClick: (slot: IslandSlot) => void;
   onBuildingClick: (b: BuildingView) => void;
+  theme: string;
+  level: number;
+  learnedWords: number;
+  residents: { name: string; quote: string; color: string }[];
+  onResidentClick: (r: { name: string; quote: string }) => void;
 }
 
-export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotClick, onBuildingClick }: SceneProps) {
+export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotClick, onBuildingClick, theme, level, learnedWords, residents, onResidentClick }: SceneProps) {
   const bySlot = useMemo(() => new Map(buildings.map((b) => [b.slot, b])), [buildings]);
   const pendingDef = pendingType ? getBuildingDef(pendingType) : null;
   const slotsSorted = [...ISLAND_SLOTS].sort((a, b) => a.y - b.y);
+  const palette = THEME_PALETTE[theme] ?? THEME_PALETTE.tropical;
 
   return (
     <svg viewBox="0 0 1000 640" className="block h-auto w-full select-none" role="img" aria-label="我的岛屿">
       <defs>
         <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#c9e9fb" />
-          <stop offset="100%" stopColor="#7fc2ee" />
+          <stop offset="0%" stopColor={palette.sea[0]} />
+          <stop offset="100%" stopColor={palette.sea[1]} />
         </linearGradient>
         <radialGradient id="shallow" cx="50%" cy="55%" r="55%">
-          <stop offset="60%" stopColor="#bfe6f7" stopOpacity="0.9" />
-          <stop offset="100%" stopColor="#bfe6f7" stopOpacity="0" />
+          <stop offset="60%" stopColor={palette.shallow} stopOpacity="0.9" />
+          <stop offset="100%" stopColor={palette.shallow} stopOpacity="0" />
         </radialGradient>
         <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#a8dc92" />
-          <stop offset="100%" stopColor="#7cc46f" />
+          <stop offset="0%" stopColor={palette.grass[0]} />
+          <stop offset="100%" stopColor={palette.grass[1]} />
         </linearGradient>
       </defs>
 
       {/* Sea */}
       <rect width="1000" height="640" fill="url(#sea)" />
-      <circle cx="880" cy="80" r="34" fill="#ffe28a" />
-      <circle cx="880" cy="80" r="52" fill="#ffe28a" opacity="0.25" />
+      <circle cx="880" cy="80" r="34" fill={palette.sun} />
+      <circle cx="880" cy="80" r="52" fill={palette.sun} opacity="0.25" />
       <Cloud x={160} y={90} s={1} delay="0s" />
       <Cloud x={620} y={60} s={0.8} delay="-6s" />
       <Cloud x={820} y={150} s={0.6} delay="-11s" />
@@ -84,8 +99,8 @@ export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotC
 
       {/* Island */}
       <ellipse cx="500" cy="372" rx="430" ry="208" fill="#e4cf9e" opacity="0.55" />
-      <ellipse cx="500" cy="362" rx="420" ry="198" fill="#f1dfb3" />
-      <ellipse cx="560" cy="385" rx="360" ry="172" fill="#f3e3bb" />
+      <ellipse cx="500" cy="362" rx="420" ry="198" fill={palette.sand} />
+      <ellipse cx="560" cy="385" rx="360" ry="172" fill={palette.sand} opacity="0.92" />
       <ellipse cx="500" cy="340" rx="360" ry="158" fill="url(#grass)" />
       <ellipse cx="470" cy="330" rx="300" ry="120" fill="#b7e4a0" opacity="0.45" />
       <ellipse cx="300" cy="300" rx="40" ry="16" fill="#6db862" opacity="0.35" />
@@ -137,6 +152,22 @@ export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotC
           );
         }
         const valid = pendingDef ? canPlaceOnSlot(pendingDef, slot) : true;
+        if (slot.unlock && !isSlotUnlocked(slot, level, learnedWords)) {
+          // 未解锁的扩建地块
+          return (
+            <g key={slot.id} className="cursor-not-allowed" opacity={0.75}>
+              <title>{slotUnlockLabel(slot) ?? "未解锁"}</title>
+              <ellipse cx={slot.x} cy={slot.y} rx={40 * s} ry={13 * s} fill="#3d4a5c" opacity={0.25} />
+              <ellipse cx={slot.x} cy={slot.y} rx={40 * s} ry={13 * s} fill="none" stroke="#3d4a5c" strokeWidth={2} strokeDasharray="6 5" opacity={0.55} />
+              <text x={slot.x} y={slot.y + 4} textAnchor="middle" fontSize={14} fill="#3d4a5c" opacity={0.85}>
+                🔒
+              </text>
+              <text x={slot.x} y={slot.y + 22} textAnchor="middle" fontSize={11} fontWeight={600} fill="#3d4a5c" opacity={0.8}>
+                {slot.unlock.level}级·{slot.unlock.learned}词
+              </text>
+            </g>
+          );
+        }
         return (
           <g key={slot.id} className={cn(valid ? "cursor-pointer" : "cursor-not-allowed")} onClick={() => valid && onSlotClick(slot)}>
             <title>{slot.terrain === "beach" ? "沙滩空位" : "草地空位"}</title>
@@ -159,11 +190,62 @@ export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotC
           </g>
         );
       })}
+
+      {/* 居民散步 */}
+      <ResidentWalkers residents={residents} onClick={onResidentClick} />
     </svg>
   );
 }
 
+/** 平面场景里的居民小人（散步 + 点击冒台词） */
+function ResidentWalkers({ residents, onClick }: { residents: { name: string; quote: string; color: string }[]; onClick: (r: { name: string; quote: string }) => void }) {
+  const n = Math.max(residents.length, 1);
+  return (
+    <g>
+      {residents.map((r, i) => {
+        const a = (i / n) * Math.PI * 2 + 0.7;
+        const x = 500 + Math.cos(a) * 300;
+        const y = 372 + Math.sin(a) * 130;
+        return (
+          <g
+            key={r.name}
+            className="cursor-pointer"
+            transform={`translate(${x} ${y})`}
+            onClick={() => onClick(r)}
+            style={{ animation: `wi-bob 2.4s ease-in-out ${i * 0.3}s infinite` }}
+          >
+            <title>{`${r.name}：${r.quote}`}</title>
+            <ellipse cx={0} cy={14} rx={13} ry={4} fill="#1d2433" opacity={0.12} />
+            <path d="M -7 12 L -7 -2 Q -7 -10 0 -10 Q 7 -10 7 -2 L 7 12 Z" fill={r.color} />
+            <circle cx={0} cy={-15} r={6.5} fill="#f4d3b0" />
+            <path d="M -7 -16 Q 0 -26 7 -16 Z" fill="#e8b86a" />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
 // ---------------- View ----------------
+
+const THEME_STORAGE_KEY = "word-island:island-theme";
+
+function getThemePref(): string {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) ?? "tropical";
+  } catch {
+    return "tropical";
+  }
+}
+
+function subscribeTheme(onChange: () => void): () => void {
+  window.addEventListener("storage", onChange);
+  window.addEventListener("wi-theme-change", onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener("wi-theme-change", onChange);
+  };
+}
 
 /** 解析背包建筑 itemKey：bld:<type>:L<level> */
 function parseItemKey(itemKey: string): { type: string; level: number } | null {
@@ -176,6 +258,7 @@ type Panel = "overview" | "shop" | "building";
 export function IslandView({ initial }: { initial: IslandState }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const router = useRouter();
   const [island, setIsland] = useState<IslandState>(initial);
   const [panel, setPanel] = useState<Panel>("overview");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -186,6 +269,15 @@ export function IslandView({ initial }: { initial: IslandState }) {
   /** 背包放置模式：记录待放置的 itemKey */
   const [pendingBackpack, setPendingBackpack] = useState<string | null>(null);
   const [popId, setPopId] = useState<number | null>(null);
+  /** 岛屿主题（本地记住选择，购买状态由服务端校验）；useSyncExternalStore 避免 SSR hydration 不匹配 */
+  const themePref = useSyncExternalStore(subscribeTheme, getThemePref, () => "tropical");
+  const setThemePref = (key: string) => {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, key);
+    } catch {}
+    window.dispatchEvent(new Event("wi-theme-change"));
+  };
+  const [raidOpen, setRaidOpen] = useState(false);
   const [coinDelta, setCoinDelta] = useState<{ v: number; k: number } | null>(null);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -197,6 +289,10 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const selected = buildings.find((b) => b.id === selectedId) ?? null;
   const selectedDef = selected ? getBuildingDef(selected.type) : null;
   const pendingBackpackDef = pendingBackpack ? getBuildingDef(parseItemKey(pendingBackpack)?.type ?? "") : null;
+  const ownedThemes = island.themes;
+  const theme = ownedThemes.includes(themePref) ? themePref : "tropical";
+  const palette = THEME_PALETTE[theme] ?? THEME_PALETTE.tropical;
+  const lockedSlotIds = ISLAND_SLOTS.filter((s) => s.unlock && !isSlotUnlocked(s, player.level, island.learnedWords)).map((s) => s.id);
 
   useEffect(() => {
     if (!popId) return;
@@ -236,6 +332,9 @@ export function IslandView({ initial }: { initial: IslandState }) {
   };
 
   const onSlotClick = (slot: IslandSlot) => {
+    if (slot.unlock && !isSlotUnlocked(slot, player.level, island.learnedWords)) {
+      return toast({ kind: "info", title: "这块地还没开垦", description: slotUnlockLabel(slot) ?? undefined });
+    }
     if (pendingMove) return doMove(pendingMove, slot.id);
     if (pendingBackpack) return doPlaceBackpack(pendingBackpack, slot.id);
     if (pendingType) return doBuild(pendingType, slot.id);
@@ -350,6 +449,49 @@ export function IslandView({ initial }: { initial: IslandState }) {
     setPendingBackpack(null);
   };
 
+  // ---------- 建筑功能化 ----------
+
+  const doLighthouse = () => {
+    startTransition(async () => {
+      const res = await lighthouseCheckInAction();
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data.island);
+      toast({ kind: "reward", title: "灯塔已点亮", description: `+${res.data.coins} 金币` });
+    });
+  };
+
+  const doWindmill = () => {
+    startTransition(async () => {
+      const res = await windmillHarvestAction();
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data.island);
+      toast({ kind: "reward", title: `收集了 ${res.data.reviewed} 次复习的能量`, description: `+${res.data.coins} 金币` });
+    });
+  };
+
+  const doClaimIsle = (slug: string, name: string) => {
+    startTransition(async () => {
+      const res = await claimIsleRewardAction(slug);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data.island);
+      toast({ kind: "reward", title: `「${name}」解锁奖励`, description: `+${res.data.coins} 金币` });
+    });
+  };
+
+  const doBuyTheme = (key: "tropical" | "aurora" | "sunset", name: string, cost: number) => {
+    startTransition(async () => {
+      const res = await buyThemeAction(key);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data.island);
+      setThemePref(key);
+      toast({ kind: "success", title: `已换上「${name}」主题`, description: cost > 0 ? `花费 ${cost} 金币` : undefined });
+    });
+  };
+
+  const onResidentClick = (r: { name: string; quote: string }) => {
+    toast({ kind: "info", title: r.name, description: r.quote });
+  };
+
   const ownedCount = (type: string) => buildings.filter((b) => b.type === type).length;
   const emptySlots = ISLAND_SLOTS.filter((s) => !buildings.some((b) => b.slot === s.id));
   const pendingDef = pendingType ? getBuildingDef(pendingType) : null;
@@ -395,12 +537,15 @@ export function IslandView({ initial }: { initial: IslandState }) {
           <Button variant={panel === "shop" ? "primary" : "secondary"} icon={<Store className="h-4 w-4" />} onClick={() => { setPanel("shop"); setSelectedId(null); scrollPanel(); }}>
             商店
           </Button>
+          <Button variant={raidOpen ? "primary" : island.raid?.status === "active" ? "sun" : "secondary"} icon={<Shield className="h-4 w-4" />} onClick={() => { setRaidOpen(true); setSelectedId(null); scrollPanel(); }}>
+            {island.raid?.status === "active" ? `保卫战 ${island.raid.wavesResolved}/${island.raid.wavesTotal}` : island.raid?.status === "won" ? "今日守住了" : island.raid?.status === "lost" ? "今日失守" : "保卫战"}
+          </Button>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
         {/* Scene */}
-        <Card className="relative overflow-hidden rounded-4xl border-0 bg-ocean-100">
+        <Card className={cn("relative overflow-hidden rounded-4xl border-0", palette.cardBg)}>
           {(pendingDef || pendingSlot || pendingMove || pendingBackpackDef) && (
             <div className="absolute inset-x-3 top-3 z-10 flex items-center justify-between gap-2 rounded-2xl bg-ink/85 px-4 py-2.5 text-sm text-white backdrop-blur">
               <span className="inline-flex items-center gap-2">
@@ -420,12 +565,12 @@ export function IslandView({ initial }: { initial: IslandState }) {
           )}
           {sceneMode === "3d" ? (
             <div className="p-2">
-              <Island3D buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+              <Island3D buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} residentColors={island.residents.map((r) => r.color)} lockedSlotIds={lockedSlotIds} />
             </div>
           ) : (
             <div className="overflow-x-auto no-scrollbar">
               <div className="min-w-[640px]">
-                <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+                <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} theme={theme} level={player.level} learnedWords={island.learnedWords} residents={island.residents} onResidentClick={onResidentClick} />
               </div>
             </div>
           )}
@@ -454,6 +599,35 @@ export function IslandView({ initial }: { initial: IslandState }) {
                 </button>
               </div>
               <p className="mt-4 text-sm text-slate-600">{selectedDef.description}</p>
+              {/* 建筑功能化：有功能的建筑给出直达入口 */}
+              {selected.type === "library" && (
+                <Link href="/reading" className="mt-3 flex items-center justify-between rounded-2xl bg-ocean-50 px-4 py-3 text-sm font-medium text-ocean-700 transition hover:bg-ocean-100">
+                  <span className="inline-flex items-center gap-2"><BookOpen className="h-4 w-4" /> 图书馆功能 · 去书屿读今日文章</span>
+                  <ArrowUpCircle className="h-4 w-4 rotate-90" />
+                </Link>
+              )}
+              {selected.type === "lighthouse" && (
+                <div className="mt-3 rounded-2xl bg-sun-50 px-4 py-3">
+                  <div className="flex items-center justify-between text-sm font-medium text-sun-600">
+                    <span className="inline-flex items-center gap-2"><Flame className="h-4 w-4" /> 灯塔签到 · 每天点亮领金币</span>
+                    <Button size="sm" loading={pending} onClick={doLighthouse}>点亮 +25</Button>
+                  </div>
+                </div>
+              )}
+              {selected.type === "windmill" && (
+                <div className="mt-3 rounded-2xl bg-leaf-50 px-4 py-3">
+                  <div className="flex items-center justify-between text-sm font-medium text-leaf-700">
+                    <span className="inline-flex items-center gap-2"><Wind className="h-4 w-4" /> 风车能量 · 今日复习 ×2 金币</span>
+                    <Button size="sm" loading={pending} onClick={doWindmill}>收集</Button>
+                  </div>
+                </div>
+              )}
+              {selected.type === "garden" && (
+                <Link href="/garden" className="mt-3 flex items-center justify-between rounded-2xl bg-leaf-50 px-4 py-3 text-sm font-medium text-leaf-700 transition hover:bg-leaf-100">
+                  <span className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4" /> 花园联动 · 已绽放 {island.masteredWords} 棵植物</span>
+                  <ArrowUpCircle className="h-4 w-4 rotate-90" />
+                </Link>
+              )}
               <div className="mt-4 space-y-1.5">
                 {selectedDef.levelNotes.map((note, i) => {
                   const lv = i + 1;
@@ -629,6 +803,83 @@ export function IslandView({ initial }: { initial: IslandState }) {
                 ) : (
                   <div className="rounded-2xl bg-sun-100 p-3 text-sm font-semibold text-sun-600">全部建筑已解锁！</div>
                 )}
+
+                {/* 居民 */}
+                <div className="rounded-2xl bg-sand-50 p-3">
+                  <div className="flex items-center justify-between text-sm font-semibold text-ink">
+                    <span className="inline-flex items-center gap-1.5"><Users className="h-4 w-4 text-ocean-500" /> 岛上居民 {island.residents.length} 位</span>
+                    <span className="text-xs font-normal text-slate-400">已掌握 {island.masteredWords} 词</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {island.residents.map((r) => (
+                      <span key={r.name} className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-xs text-slate-500 shadow-sm">
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: r.color }} />
+                        {r.name}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">每掌握 40 个词或每建 3 座建筑，就会有新居民入住。</p>
+                </div>
+
+                {/* 群岛 */}
+                <div className="rounded-2xl bg-ocean-50/60 p-3">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                    <Crown className="h-4 w-4 text-sun-500" /> 群岛 · 按词库解锁的邻岛
+                  </div>
+                  <div className="mt-2 space-y-1.5">
+                    {island.archipelago.map((isle) => (
+                      <div key={isle.slug} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2">
+                        <span className={cn("text-lg", !isle.unlocked && "grayscale opacity-50")}>🏝️</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span className="truncate">{isle.name}</span>
+                            <span className="text-slate-400">{isle.learned}/{isle.unlockNeed}</span>
+                          </div>
+                          <ProgressBar value={Math.min(isle.learned, isle.unlockNeed)} max={isle.unlockNeed} className="mt-1" height="h-1.5" barClassName={isle.unlocked ? "bg-leaf-500" : "bg-ocean-500"} />
+                        </div>
+                        {isle.unlocked && !isle.claimed && (
+                          <Button size="sm" variant="sun" loading={pending} onClick={() => doClaimIsle(isle.slug, isle.name)}>领奖</Button>
+                        )}
+                        {isle.unlocked && isle.claimed && <span className="text-xs text-leaf-600">已解锁</span>}
+                        {!isle.unlocked && (
+                          <Link href="/study" className="text-xs font-medium text-ocean-600 hover:underline">去学习</Link>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 主题 */}
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                    <Palette className="h-4 w-4 text-coral-400" /> 岛屿主题（平面渲染）
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {ISLAND_THEMES.map((t) => {
+                      const owned = ownedThemes.includes(t.key);
+                      const active = theme === t.key;
+                      return (
+                        <button
+                          key={t.key}
+                          disabled={pending}
+                          onClick={() => (owned ? setThemePref(t.key) : doBuyTheme(t.key as "aurora" | "sunset", t.name, t.cost))}
+                          className={cn(
+                            "rounded-xl border-2 p-2 text-center transition",
+                            active ? "border-ocean-400 bg-white" : "border-transparent bg-white/70 hover:bg-white",
+                          )}
+                        >
+                          <div className="flex h-6 gap-1 overflow-hidden rounded-md">
+                            <span className="flex-1" style={{ backgroundColor: THEME_PALETTE[t.key].sea[1] }} />
+                            <span className="flex-1" style={{ backgroundColor: THEME_PALETTE[t.key].grass[0] }} />
+                            <span className="flex-1" style={{ backgroundColor: THEME_PALETTE[t.key].sand }} />
+                          </div>
+                          <div className="mt-1 text-[11px] font-semibold">{t.name}</div>
+                          <div className="text-[10px] text-slate-400">{active ? "使用中" : owned ? "点击使用" : t.cost > 0 ? `${t.cost} 金币` : "免费"}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
               <div className="mt-4 space-y-2">
                 <Button className="w-full" icon={<Store className="h-4 w-4" />} onClick={() => setPanel("shop")}>
@@ -646,6 +897,7 @@ export function IslandView({ initial }: { initial: IslandState }) {
           )}
         </div>
       </div>
+      <RaidModal summary={island.raid} open={raidOpen} onClose={() => { setRaidOpen(false); router.refresh(); }} />
       <ConfirmDialog state={confirm.state} onClose={confirm.close} />
     </div>
   );

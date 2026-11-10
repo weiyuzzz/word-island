@@ -13,13 +13,15 @@ interface Props {
   popId: number | null;
   onSlotClick: (slot: IslandSlot) => void;
   onBuildingClick: (b: BuildingView) => void;
+  residentColors?: string[];
+  lockedSlotIds?: number[];
 }
 
 /** P2：可旋转的低多边形岛屿。点击空位 / 建筑仍走原来的建造与详情逻辑。 */
-export function Island3D({ buildings, selectedId, pendingType, popId, onSlotClick, onBuildingClick }: Props) {
+export function Island3D({ buildings, selectedId, pendingType, popId, onSlotClick, onBuildingClick, residentColors, lockedSlotIds }: Props) {
   const build = useCallback(
-    (time: number) => buildIslandFrame({ buildings, selectedId, pendingType, popId, time }),
-    [buildings, selectedId, pendingType, popId],
+    (time: number) => buildIslandFrame({ buildings, selectedId, pendingType, popId, time, residentColors, lockedSlotIds }),
+    [buildings, selectedId, pendingType, popId, residentColors, lockedSlotIds],
   );
 
   const onPick = useCallback(

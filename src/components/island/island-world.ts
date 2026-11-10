@@ -167,10 +167,14 @@ export interface IslandFrameInput {
   pendingType: string | null;
   popId: number | null;
   time: number;
+  /** 入住居民（颜色轮换出 walkers） */
+  residentColors?: string[];
+  /** 未解锁的扩建槽位 id（暗色虚位、不可点击） */
+  lockedSlotIds?: number[];
 }
 
 /** 纯函数：把岛屿状态翻译成 3D 面与可点击锚点，便于单测。 */
-export function buildIslandFrame({ buildings, selectedId, pendingType, popId, time }: IslandFrameInput): WorldFrame {
+export function buildIslandFrame({ buildings, selectedId, pendingType, popId, time, residentColors, lockedSlotIds }: IslandFrameInput): WorldFrame {
   const t = time;
   const faces: Face[] = [];
   const anchors: Anchor[] = [];
@@ -207,6 +211,9 @@ export function buildIslandFrame({ buildings, selectedId, pendingType, popId, ti
       faces.push(...buildDisc(p.x, p.z, 0.95 * slot.scale, "#6f9f68", 0.004, 12, 0.35));
       faces.push(...buildingFaces(b, p.x, p.z, t, popId === b.id));
       anchors.push({ id: `b:${b.id}`, position: v3(p.x, 0.12, p.z), radius: 36, kind: "building", label: getBuildingDef(b.type)?.name });
+    } else if (lockedSlotIds?.includes(slot.id)) {
+      // 未解锁的扩建地块：暗色虚位，不生成锚点（不可点击）
+      faces.push(...buildDisc(p.x, p.z, 0.86 * slot.scale, "#3d4a5c", 0.006, 12, 0.12));
     } else {
       const valid = pendingDef ? canPlaceOnSlot(pendingDef, slot) : true;
       faces.push(...buildDisc(p.x, p.z, 0.86 * slot.scale, pendingDef ? (valid ? "#8fd0ff" : "#ffffff") : "#ffffff", 0.006, 12, pendingDef ? (valid ? 0.55 : 0.1) : 0.22));
@@ -214,8 +221,9 @@ export function buildIslandFrame({ buildings, selectedId, pendingType, popId, ti
     }
   }
 
-  // 居民在岛上散步
-  const walkers: [string, number][] = [["#4f8fc4", 0], ["#ef8a73", 2.1], ["#62bd72", 4.3]];
+  // 居民在岛上散步（数量随入住人数增长）
+  const colors = residentColors?.length ? residentColors : ["#4f8fc4"];
+  const walkers: [string, number][] = colors.map((color, i) => [color, i * 2.1]);
   for (const [color, phase] of walkers) {
     const a = t * 0.24 + phase;
     const x = Math.cos(a) * 5.6;

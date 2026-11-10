@@ -44,6 +44,13 @@ export const schemas = {
     itemKey: z.string().trim().min(1).max(64),
     slot: z.number().int().min(0).max(29),
   }),
+  isleSlug: z.string().trim().min(1).max(40),
+  themeKey: z.enum(["tropical", "aurora", "sunset"]),
+  resolveRaidWave: z.object({
+    raidId: z.number().int().positive(),
+    waveIndex: z.number().int().min(0).max(11),
+    answerIndex: z.number().int().min(0).max(5),
+  }),
   getWords: z.object({
     deckId: z.number().int().positive().nullable(),
     q: z.string().trim().max(128).optional(),

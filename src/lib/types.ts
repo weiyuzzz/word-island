@@ -161,12 +161,58 @@ export interface IslandProgress {
   nextUnlock: { type: string; name: string; level: number } | null;
 }
 
+export interface IslandResident {
+  name: string;
+  quote: string;
+  color: string;
+}
+
+export interface ArchipelagoIsle {
+  slug: string;
+  name: string;
+  total: number;
+  learned: number;
+  unlockNeed: number;
+  unlocked: boolean;
+  claimed: boolean;
+}
+
+export interface RaidSummary {
+  id: number;
+  status: "active" | "won" | "lost";
+  wavesTotal: number;
+  wavesResolved: number;
+  hearts: number;
+  maxHearts: number;
+}
+
+export interface RaidWave {
+  wordId: number;
+  word: string;
+  meaning: string;
+  mode: "en2zh" | "zh2en";
+  options: string[];
+  correctIndex: number;
+  monster: string;
+}
+
 export interface IslandState {
   buildings: BuildingView[];
   player: PlayerSnapshot;
   progress: IslandProgress;
   /** 背包里的建筑（拆除收进背包的建筑，itemKey 形如 bld:<type>:L<level>） */
   backpack: { itemKey: string; qty: number }[];
+  /** 累计已学（非 new）与已掌握词数：驱动槽位解锁与居民入住 */
+  learnedWords: number;
+  masteredWords: number;
+  /** 岛上居民（随掌握词数与建筑数入住） */
+  residents: IslandResident[];
+  /** 群岛：按内置词库学习进度解锁的邻岛 */
+  archipelago: ArchipelagoIsle[];
+  /** 已拥有的岛屿主题（tropical 永久拥有） */
+  themes: string[];
+  /** 今日保卫战状态；无则今天尚未刷怪 */
+  raid: RaidSummary | null;
 }
 
 export interface ImportResult {

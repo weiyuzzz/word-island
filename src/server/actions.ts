@@ -3,7 +3,8 @@
 import type { ActionResult } from "@/lib/types";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { claimLoginReward, updateDailyGoal } from "./dashboard";
-import { buildAt, moveBuilding, placeFromInventory, removeBuilding, upgradeBuilding } from "./island";
+import { buildAt, buyTheme, claimIsleReward, lighthouseCheckIn, moveBuilding, placeFromInventory, removeBuilding, upgradeBuilding, windmillHarvest } from "./island";
+import { getRaidDetail, resolveRaidWave } from "./island-raid";
 import { createSession, finishSession, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
 import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, shareDeck, updateWord } from "./vocab";
@@ -108,6 +109,38 @@ export async function placeFromInventoryAction(itemKey: string, slot: number) {
   const parsed = schemas.placeFromInventory.safeParse({ itemKey, slot });
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => placeFromInventory(parsed.data.itemKey, parsed.data.slot));
+}
+
+export async function lighthouseCheckInAction() {
+  return run(() => lighthouseCheckIn());
+}
+
+export async function windmillHarvestAction() {
+  return run(() => windmillHarvest());
+}
+
+export async function claimIsleRewardAction(slug: string) {
+  const parsed = schemas.isleSlug.safeParse(slug);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => claimIsleReward(parsed.data));
+}
+
+export async function buyThemeAction(key: "tropical" | "aurora" | "sunset") {
+  const parsed = schemas.themeKey.safeParse(key);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => buyTheme(parsed.data));
+}
+
+export async function getRaidDetailAction(raidId: number) {
+  const parsed = schemas.finishArticle.safeParse(raidId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => getRaidDetail(parsed.data));
+}
+
+export async function resolveRaidWaveAction(input: { raidId: number; waveIndex: number; answerIndex: number }) {
+  const parsed = schemas.resolveRaidWave.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => resolveRaidWave(parsed.data.raidId, parsed.data.waveIndex, parsed.data.answerIndex));
 }
 
 // ---------- 词库 ----------

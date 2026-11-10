@@ -178,8 +178,8 @@ describe("交互换算", () => {
 });
 
 describe("场景装配", () => {
-  it("岛屿有 12 个锚点，slot 坐标落在地块范围内", () => {
-    const frame = buildIslandFrame({ buildings: [], selectedId: null, pendingType: null, popId: null, time: 0 });
+  it("岛屿锚点只覆盖开放槽位（扩建位默认锁定），slot 坐标落在地块范围内", () => {
+    const frame = buildIslandFrame({ buildings: [], selectedId: null, pendingType: null, popId: null, time: 0, lockedSlotIds: [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] });
     expect(frame.anchors).toHaveLength(12);
     expect(frame.faces.length).toBeGreaterThan(40);
     expect(slotToWorld(500, 350)).toEqual({ x: 0, z: 0 });

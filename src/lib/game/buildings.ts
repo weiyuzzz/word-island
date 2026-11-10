@@ -204,9 +204,11 @@ export interface IslandSlot {
   y: number;
   scale: number;
   terrain: "land" | "beach";
+  /** 解锁条件：等级 + 累计已学词数；未设置则随岛开放 */
+  unlock?: { level: number; learned: number };
 }
 
-/** 岛屿场景的固定建造点（viewBox 1000×640） */
+/** 岛屿场景的建造点（viewBox 1000×640）：1-12 初始开放，13-24 随等级与词量解锁，岛屿逐渐变大 */
 export const ISLAND_SLOTS: IslandSlot[] = [
   { id: 1, x: 340, y: 262, scale: 0.72, terrain: "land" },
   { id: 2, x: 500, y: 248, scale: 0.72, terrain: "land" },
@@ -220,7 +222,30 @@ export const ISLAND_SLOTS: IslandSlot[] = [
   { id: 10, x: 670, y: 425, scale: 0.95, terrain: "land" },
   { id: 11, x: 170, y: 445, scale: 0.9, terrain: "beach" },
   { id: 12, x: 835, y: 455, scale: 0.9, terrain: "beach" },
+  // —— 环带扩建：解锁后岛屿向四周生长 ——
+  { id: 13, x: 150, y: 320, scale: 0.8, terrain: "land", unlock: { level: 4, learned: 60 } },
+  { id: 14, x: 850, y: 320, scale: 0.8, terrain: "land", unlock: { level: 4, learned: 60 } },
+  { id: 15, x: 230, y: 200, scale: 0.75, terrain: "land", unlock: { level: 4, learned: 60 } },
+  { id: 16, x: 770, y: 195, scale: 0.75, terrain: "land", unlock: { level: 4, learned: 60 } },
+  { id: 17, x: 640, y: 520, scale: 0.85, terrain: "land", unlock: { level: 6, learned: 150 } },
+  { id: 18, x: 360, y: 545, scale: 0.85, terrain: "land", unlock: { level: 6, learned: 150 } },
+  { id: 19, x: 105, y: 400, scale: 0.8, terrain: "beach", unlock: { level: 6, learned: 150 } },
+  { id: 20, x: 895, y: 400, scale: 0.8, terrain: "beach", unlock: { level: 6, learned: 150 } },
+  { id: 21, x: 500, y: 195, scale: 0.8, terrain: "land", unlock: { level: 8, learned: 300 } },
+  { id: 22, x: 660, y: 175, scale: 0.7, terrain: "land", unlock: { level: 8, learned: 300 } },
+  { id: 23, x: 340, y: 175, scale: 0.7, terrain: "land", unlock: { level: 8, learned: 300 } },
+  { id: 24, x: 500, y: 555, scale: 0.8, terrain: "beach", unlock: { level: 8, learned: 300 } },
 ];
+
+export function slotUnlockLabel(slot: IslandSlot): string | null {
+  if (!slot.unlock) return null;
+  return `需要 Lv.${slot.unlock.level} 且累计学习 ${slot.unlock.learned} 词`;
+}
+
+export function isSlotUnlocked(slot: IslandSlot, level: number, learnedWords: number): boolean {
+  if (!slot.unlock) return true;
+  return level >= slot.unlock.level && learnedWords >= slot.unlock.learned;
+}
 
 export const INITIAL_CABIN_SLOT = 5;
 
@@ -250,3 +275,18 @@ export function refundFor(def: BuildingDef, level: number): number {
   const spent = def.buildCost + def.upgradeCosts.slice(0, Math.max(0, level - 1)).reduce((a, b) => a + b, 0);
   return Math.floor(spent * 0.5);
 }
+
+// ---------- 岛屿主题 ----------
+
+export interface IslandThemeDef {
+  key: string;
+  name: string;
+  description: string;
+  cost: number;
+}
+
+export const ISLAND_THEMES: IslandThemeDef[] = [
+  { key: "tropical", name: "阳光海岛", description: "经典的碧海蓝天", cost: 0 },
+  { key: "aurora", name: "极光雪岛", description: "雪原与极光冷色盘", cost: 300 },
+  { key: "sunset", name: "黄昏金岛", description: "落日染金的海面", cost: 500 },
+];
