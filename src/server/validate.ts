@@ -88,6 +88,56 @@ export const schemas = {
     password: z.string().min(6).max(64),
   }),
   adminDeleteUser: z.number().int().positive(),
+  // ---------- 书屿 ----------
+  readingSlot: z.enum(["deep", "broad", "news"]),
+  saveProgress: z.object({
+    deliveryId: z.number().int().positive(),
+    paragraphIndex: z.number().int().min(0).max(500),
+    addSeconds: z.number().int().min(0).max(30),
+  }),
+  finishArticle: z.number().int().positive(),
+  saveHighlight: z.object({
+    articleId: z.number().int().positive(),
+    paragraphIndex: z.number().int().min(0).max(500),
+    startOffset: z.number().int().min(0).max(5000),
+    endOffset: z.number().int().min(1).max(5001),
+    color: z.enum(["sun", "leaf", "ocean"]),
+  }),
+  removeHighlight: z.number().int().positive(),
+  saveNote: z.object({
+    articleId: z.number().int().positive(),
+    paragraphIndex: z.number().int().min(0).max(500),
+    startOffset: z.number().int().min(0).max(5000),
+    endOffset: z.number().int().min(0).max(5001),
+    quote: z.string().trim().min(1).max(600),
+    noteType: z.enum(["expression", "phrase", "grammar", "long_sentence"]),
+    content: z.string().trim().max(2000),
+    tags: z.array(z.string().trim().min(1).max(24)).max(6),
+    aiAnalysis: z.string().max(4000).nullable().optional(),
+  }),
+  noteFamiliarity: z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100),
+    familiarity: z.enum(["unmarked", "familiar", "ok", "forgotten"]),
+  }),
+  deleteNote: z.number().int().positive(),
+  lookupWord: z.string().trim().min(1).max(64),
+  addReadingWord: z.object({
+    word: z.string().trim().min(1).max(64),
+    meaning: z.string().trim().min(1).max(256),
+    phonetic: z.string().trim().max(128).optional(),
+    pos: z.string().trim().max(32).optional(),
+    example: z.string().trim().max(512).optional(),
+    translation: z.string().trim().max(512).optional(),
+  }),
+  analyzeSentence: z.string().trim().min(1).max(600),
+  manualImport: z.object({
+    title: z.string().trim().min(1).max(300),
+    author: z.string().trim().max(200).optional(),
+    url: z.string().trim().max(500).optional(),
+    topic: z.string().trim().max(40).optional(),
+    text: z.string().min(1).max(200000),
+  }),
+  ingestSource: z.enum(["conversation", "guardian", "bbc", "news"]),
 };
 
 export const gameSchemas = {
@@ -132,7 +182,17 @@ function isKnownError(e: unknown): boolean {
     msg.includes("格式无效") ||
     msg.includes("请输入") ||
     msg.includes("不能为空") ||
-    msg.includes("重复")
+    msg.includes("重复") ||
+    // 书屿
+    msg.includes("阅读") ||
+    msg.includes("文章") ||
+    msg.includes("选区") ||
+    msg.includes("摘录") ||
+    msg.includes("释义") ||
+    msg.includes("热点") ||
+    msg.includes("AI") ||
+    msg.includes("词典") ||
+    msg.includes("笔记")
   );
 }
 

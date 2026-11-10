@@ -7,8 +7,9 @@ import type { AdminUserRow } from "@/server/auth";
 import { adminCreateUserAction, adminDeleteUserAction, adminResetPasswordAction, backfillAudioAction } from "@/server/actions";
 import { Button, Card, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
+import { ReadingAdminCard } from "../reading/reading-admin";
 
-export function AdminPanel({ currentUserId, initialUsers }: { currentUserId: number; initialUsers: AdminUserRow[] }) {
+export function AdminPanel({ currentUserId, initialUsers, pool }: { currentUserId: number; initialUsers: AdminUserRow[]; pool: { source: string; count: number }[] }) {
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
@@ -92,6 +93,8 @@ export function AdminPanel({ currentUserId, initialUsers }: { currentUserId: num
         </div>
         {backfillMsg && <p className="mt-3 rounded-xl bg-ocean-50 px-3 py-2 text-xs text-ocean-700">{backfillMsg}</p>}
       </Card>
+
+      <ReadingAdminCard pool={pool} />
 
       <Card className="p-5">
         <div className="text-sm font-semibold">新建账号</div>

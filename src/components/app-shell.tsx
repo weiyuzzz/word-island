@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
-import { BookOpen, ChartColumn, Compass, GraduationCap, House, LogOut, ShieldCheck, Sprout, TreePalm, Trophy } from "lucide-react";
+import { BookOpen, BookOpenText, ChartColumn, Compass, GraduationCap, House, LogOut, ShieldCheck, Sprout, TreePalm, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logoutAction } from "@/server/actions";
 import { ImmersiveCtx, ToastProvider } from "./ui";
@@ -12,6 +12,7 @@ const NAV = [
   { href: "/", label: "首页", icon: House },
   { href: "/map", label: "探索", icon: Compass },
   { href: "/study", label: "学习", icon: GraduationCap },
+  { href: "/reading", label: "书屿", icon: BookOpenText },
   { href: "/island", label: "岛屿", icon: TreePalm },
   { href: "/garden", label: "花园", icon: Sprout },
   { href: "/vocab", label: "词库", icon: BookOpen },
@@ -156,7 +157,7 @@ export function AppShell({ children, user }: { children: ReactNode; user: ShellU
         {/* Mobile bottom nav */}
         {!immersive && (
           <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/70 bg-white/90 backdrop-blur md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <ul className="grid grid-cols-8">
+            <ul className="grid grid-cols-9">
               {NAV.map((item) => {
                 const active = isActive(item.href);
                 return (

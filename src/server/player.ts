@@ -349,6 +349,8 @@ export interface DailyDelta {
   xpEarned?: number;
   sessionsCompleted?: number;
   bestStreak?: number;
+  articlesRead?: number;
+  readingSeconds?: number;
 }
 
 export async function bumpDaily(tx: DbExecutor, userId: number, date: string, d: DailyDelta): Promise<void> {
@@ -361,6 +363,8 @@ export async function bumpDaily(tx: DbExecutor, userId: number, date: string, d:
     xpEarned: d.xpEarned ?? 0,
     sessionsCompleted: d.sessionsCompleted ?? 0,
     bestStreak: d.bestStreak ?? 0,
+    articlesRead: d.articlesRead ?? 0,
+    readingSeconds: d.readingSeconds ?? 0,
   };
   await tx
     .insert(dailyStats)
@@ -376,6 +380,8 @@ export async function bumpDaily(tx: DbExecutor, userId: number, date: string, d:
         xpEarned: sql`${dailyStats.xpEarned} + ${v.xpEarned}`,
         sessionsCompleted: sql`${dailyStats.sessionsCompleted} + ${v.sessionsCompleted}`,
         bestStreak: sql`greatest(${dailyStats.bestStreak}, ${v.bestStreak})`,
+        articlesRead: sql`${dailyStats.articlesRead} + ${v.articlesRead}`,
+        readingSeconds: sql`${dailyStats.readingSeconds} + ${v.readingSeconds}`,
       },
     });
 }
@@ -394,6 +400,8 @@ export async function getTodayStats(executor: DbExecutor = db, userId?: number, 
       xpEarned: 0,
       sessionsCompleted: 0,
       bestStreak: 0,
+      articlesRead: 0,
+      readingSeconds: 0,
     }
   );
 }

@@ -17,7 +17,21 @@ import {
   registerAndLogin,
 } from "./auth";
 import { backfillAllAudio } from "./audio";
-import { destroySession } from "./session";
+import { destroySession, requireAdmin } from "./session";
+import {
+  addToReadingVocab,
+  analyzeSentenceAction,
+  deleteNote,
+  finishArticle,
+  lookupWord,
+  removeHighlight,
+  replaceDelivery,
+  saveHighlight,
+  saveNote,
+  saveProgress,
+  setNoteFamiliarity,
+} from "./reading";
+import { importManualArticle, ingestNews, ingestSource } from "./reading-source";
 import { sanitizeError, schemas } from "./validate";
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -191,4 +205,122 @@ export async function listUsersForAdminAction() {
 
 export async function backfillAudioAction() {
   return run(() => backfillAllAudio());
+}
+
+// ---------- 书屿 ----------
+
+export async function replaceDeliveryAction(slot: "deep" | "broad" | "news") {
+  const parsed = schemas.readingSlot.safeParse(slot);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => replaceDelivery(parsed.data));
+}
+
+export async function saveReadingProgressAction(input: { deliveryId: number; paragraphIndex: number; addSeconds: number }) {
+  const parsed = schemas.saveProgress.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => saveProgress(parsed.data.deliveryId, parsed.data.paragraphIndex, parsed.data.addSeconds));
+}
+
+export async function finishArticleAction(deliveryId: number) {
+  const parsed = schemas.finishArticle.safeParse(deliveryId);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => finishArticle(parsed.data));
+}
+
+export async function saveHighlightAction(input: {
+  articleId: number;
+  paragraphIndex: number;
+  startOffset: number;
+  endOffset: number;
+  color: "sun" | "leaf" | "ocean";
+}) {
+  const parsed = schemas.saveHighlight.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => saveHighlight(parsed.data));
+}
+
+export async function removeHighlightAction(id: number) {
+  const parsed = schemas.removeHighlight.safeParse(id);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => removeHighlight(parsed.data));
+}
+
+export async function saveNoteAction(
+  input: {
+    articleId: number;
+    paragraphIndex: number;
+    startOffset: number;
+    endOffset: number;
+    quote: string;
+    noteType: "expression" | "phrase" | "grammar" | "long_sentence";
+    content: string;
+    tags: string[];
+    aiAnalysis?: string | null;
+  },
+) {
+  const parsed = schemas.saveNote.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => saveNote(parsed.data));
+}
+
+export async function noteFamiliarityAction(ids: number[], familiarity: string) {
+  const parsed = schemas.noteFamiliarity.safeParse({ ids, familiarity });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => setNoteFamiliarity(parsed.data.ids, parsed.data.familiarity));
+}
+
+export async function deleteNoteAction(id: number) {
+  const parsed = schemas.deleteNote.safeParse(id);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => deleteNote(parsed.data));
+}
+
+export async function lookupWordAction(word: string) {
+  const parsed = schemas.lookupWord.safeParse(word);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => lookupWord(parsed.data));
+}
+
+export async function addReadingWordAction(input: {
+  word: string;
+  meaning: string;
+  phonetic?: string;
+  pos?: string;
+  example?: string;
+  translation?: string;
+}) {
+  const parsed = schemas.addReadingWord.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => addToReadingVocab(parsed.data));
+}
+
+export async function analyzeSentenceAIAction(quote: string) {
+  const parsed = schemas.analyzeSentence.safeParse(quote);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => analyzeSentenceAction(parsed.data));
+}
+
+export async function manualImportArticleAction(input: {
+  title: string;
+  author?: string;
+  url?: string;
+  topic?: string;
+  text: string;
+}) {
+  const parsed = schemas.manualImport.safeParse(input);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(async () => {
+    await requireAdmin();
+    return importManualArticle(parsed.data);
+  });
+}
+
+export async function ingestArticlesAction(source: "conversation" | "guardian" | "bbc" | "news") {
+  const parsed = schemas.ingestSource.safeParse(source);
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(async () => {
+    await requireAdmin();
+    if (parsed.data === "news") return ingestNews();
+    return ingestSource(parsed.data);
+  });
 }

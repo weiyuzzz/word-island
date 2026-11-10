@@ -178,6 +178,8 @@ export const dailyStats = pgTable(
     xpEarned: integer("xp_earned").notNull().default(0),
     sessionsCompleted: integer("sessions_completed").notNull().default(0),
     bestStreak: integer("best_streak").notNull().default(0),
+    articlesRead: integer("articles_read").notNull().default(0),
+    readingSeconds: integer("reading_seconds").notNull().default(0),
   },
   (t) => [uniqueIndex("daily_stats_user_date_idx").on(t.userId, t.date)],
 );
@@ -315,4 +317,96 @@ export const regionProgress = pgTable(
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("region_progress_user_region_idx").on(t.userId, t.regionKey)],
+);
+
+// ---------- 书屿：文章池 / 每日推送 / 划词高亮 / 阅读笔记 ----------
+
+/** 全局共享的文章内容池（所有用户读同一份） */
+export const articles = pgTable(
+  "articles",
+  {
+    id: serial("id").primaryKey(),
+    source: text("source").notNull().default("manual"), // conversation | guardian | bbc | manual
+    title: text("title").notNull(),
+    author: text("author").notNull().default(""),
+    url: text("url"), // 手动导入可为空
+    topic: text("topic").notNull().default("general"),
+    paragraphs: jsonb("paragraphs").$type<string[]>().notNull(),
+    wordCount: integer("word_count").notNull().default(0),
+    level: integer("level").notNull().default(3), // 1-5 难度
+    /** 预计算的词元 → 出现次数（含原形与简单屈折变化），推荐打分用 */
+    vocabIndex: jsonb("vocab_index").$type<Record<string, number>>().notNull(),
+    /** 新闻类文章的保质期，过期后不再推送 */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("articles_url_idx").on(t.url)],
+);
+
+/** 每用户每日三槽位投递：deep 精读（关联学习词）/ broad 泛读（难度匹配）/ news 热读（今日新闻） */
+export const articleDeliveries = pgTable(
+  "article_deliveries",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id"),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    slot: text("slot").notNull(), // deep | broad | news
+    deliverDate: text("deliver_date").notNull(), // YYYY-MM-DD
+    reason: text("reason").notNull().default(""),
+    status: text("status").notNull().default("unread"), // unread | reading | finished
+    progressParagraph: integer("progress_paragraph").notNull().default(0),
+    readSeconds: integer("read_seconds").notNull().default(0),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("article_deliveries_user_slot_date_idx").on(t.userId, t.slot, t.deliverDate)],
+);
+
+/** 划词高亮（纯视觉标记） */
+export const articleHighlights = pgTable(
+  "article_highlights",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id"),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    paragraphIndex: integer("paragraph_index").notNull(),
+    startOffset: integer("start_offset").notNull(),
+    endOffset: integer("end_offset").notNull(),
+    text: text("text").notNull(),
+    color: text("color").notNull().default("sun"), // sun | leaf | ocean
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("article_highlights_user_article_idx").on(t.userId, t.articleId)],
+);
+
+/** 阅读笔记：表达 / 词组 / 语法 / 长难句，note_key 用于复现归并 */
+export const articleNotes = pgTable(
+  "article_notes",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id"),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    paragraphIndex: integer("paragraph_index").notNull().default(0),
+    startOffset: integer("start_offset").notNull().default(0),
+    endOffset: integer("end_offset").notNull().default(0),
+    quote: text("quote").notNull(),
+    noteKey: text("note_key").notNull().default(""),
+    noteType: text("note_type").notNull().default("phrase"), // expression | phrase | grammar | long_sentence
+    content: text("content").notNull().default(""),
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    familiarity: text("familiarity").notNull().default("unmarked"), // unmarked | familiar | ok | forgotten
+    markedAt: timestamp("marked_at", { withTimezone: true }),
+    aiAnalysis: text("ai_analysis"),
+    wordId: integer("word_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("article_notes_user_idx").on(t.userId), index("article_notes_user_key_idx").on(t.userId, t.noteKey)],
 );
