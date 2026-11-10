@@ -3,7 +3,7 @@
 import type { ActionResult } from "@/lib/types";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { claimLoginReward, updateDailyGoal } from "./dashboard";
-import { buildAt, removeBuilding, upgradeBuilding } from "./island";
+import { buildAt, moveBuilding, placeFromInventory, removeBuilding, upgradeBuilding } from "./island";
 import { createSession, finishSession, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
 import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, shareDeck, updateWord } from "./vocab";
@@ -16,7 +16,7 @@ import {
   loginUser,
   registerAndLogin,
 } from "./auth";
-import { backfillAllAudio } from "./audio";
+import { audioStats, backfillAllAudio } from "./audio";
 import { destroySession, requireAdmin } from "./session";
 import {
   addToReadingVocab,
@@ -96,6 +96,18 @@ export async function removeBuildingAction(buildingId: number) {
   const parsed = schemas.removeBuilding.safeParse(buildingId);
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => removeBuilding(parsed.data));
+}
+
+export async function moveBuildingAction(buildingId: number, slot: number) {
+  const parsed = schemas.moveBuilding.safeParse({ id: buildingId, slot });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => moveBuilding(parsed.data.id, parsed.data.slot));
+}
+
+export async function placeFromInventoryAction(itemKey: string, slot: number) {
+  const parsed = schemas.placeFromInventory.safeParse({ itemKey, slot });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => placeFromInventory(parsed.data.itemKey, parsed.data.slot));
 }
 
 // ---------- 词库 ----------
@@ -205,6 +217,10 @@ export async function listUsersForAdminAction() {
 
 export async function backfillAudioAction() {
   return run(() => backfillAllAudio());
+}
+
+export async function audioStatsAction() {
+  return run(() => audioStats());
 }
 
 // ---------- 书屿 ----------

@@ -73,3 +73,21 @@ export async function backfillAllAudio(accent: Accent = "us"): Promise<PrefetchR
   const rows = await db.select({ word: words.word }).from(words);
   return prefetchAudio(rows.map((r) => r.word), accent);
 }
+
+export interface AudioStats {
+  /** 词库中不同单词总数 */
+  total: number;
+  /** 其中已有本地发音缓存的单词数（美音） */
+  cached: number;
+}
+
+/** 发音缓存覆盖情况：词库单词数 vs 已缓存数 */
+export async function audioStats(accent: Accent = "us"): Promise<AudioStats> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(distinct ${words.wordKey})::int`,
+      cached: sql<number>`count(distinct ${words.wordKey}) filter (where exists (select 1 from ${wordAudio} a where a.word_key = ${words.wordKey} and a.accent = ${accent}))::int`,
+    })
+    .from(words);
+  return { total: row?.total ?? 0, cached: row?.cached ?? 0 };
+}

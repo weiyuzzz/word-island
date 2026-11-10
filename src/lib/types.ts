@@ -165,6 +165,8 @@ export interface IslandState {
   buildings: BuildingView[];
   player: PlayerSnapshot;
   progress: IslandProgress;
+  /** 背包里的建筑（拆除收进背包的建筑，itemKey 形如 bld:<type>:L<level>） */
+  backpack: { itemKey: string; qty: number }[];
 }
 
 export interface ImportResult {

@@ -36,6 +36,14 @@ export const schemas = {
   }),
   upgrade: z.number().int().positive(),
   removeBuilding: z.number().int().positive(),
+  moveBuilding: z.object({
+    id: z.number().int().positive(),
+    slot: z.number().int().min(0).max(29),
+  }),
+  placeFromInventory: z.object({
+    itemKey: z.string().trim().min(1).max(64),
+    slot: z.number().int().min(0).max(29),
+  }),
   getWords: z.object({
     deckId: z.number().int().positive().nullable(),
     q: z.string().trim().max(128).optional(),
@@ -184,6 +192,10 @@ function isKnownError(e: unknown): boolean {
     msg.includes("不能为空") ||
     msg.includes("重复") ||
     // 书屿
+    msg.includes("背包") ||
+    msg.includes("位置已有") ||
+    msg.includes("这个位置上") ||
+    msg.includes("不能拆除") ||
     msg.includes("阅读") ||
     msg.includes("文章") ||
     msg.includes("选区") ||

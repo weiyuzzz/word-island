@@ -4,12 +4,23 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AudioLines, KeyRound, ShieldCheck, Trash2, UserPlus } from "lucide-react";
 import type { AdminUserRow } from "@/server/auth";
-import { adminCreateUserAction, adminDeleteUserAction, adminResetPasswordAction, backfillAudioAction } from "@/server/actions";
-import { Button, Card, useToast } from "../ui";
+import { adminCreateUserAction, adminDeleteUserAction, adminResetPasswordAction, audioStatsAction, backfillAudioAction } from "@/server/actions";
+import { cn } from "@/lib/utils";
+import { Button, Card, ProgressBar, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { ReadingAdminCard } from "../reading/reading-admin";
 
-export function AdminPanel({ currentUserId, initialUsers, pool }: { currentUserId: number; initialUsers: AdminUserRow[]; pool: { source: string; count: number }[] }) {
+export function AdminPanel({
+  currentUserId,
+  initialUsers,
+  pool,
+  initialAudioStats,
+}: {
+  currentUserId: number;
+  initialUsers: AdminUserRow[];
+  pool: { source: string; count: number }[];
+  initialAudioStats: { total: number; cached: number };
+}) {
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
@@ -18,6 +29,7 @@ export function AdminPanel({ currentUserId, initialUsers, pool }: { currentUserI
   const [newPassword, setNewPassword] = useState("");
   const [pwd, setPwd] = useState<Record<number, string>>({});
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  const [audioStats, setAudioStats] = useState(initialAudioStats);
   const [pending, startTransition] = useTransition();
 
   const backfill = () => {
@@ -26,6 +38,8 @@ export function AdminPanel({ currentUserId, initialUsers, pool }: { currentUserI
       const res = await backfillAudioAction();
       if (!res.ok) return setBackfillMsg(res.error);
       setBackfillMsg(`补齐完成：本次下载 ${res.data.fetched} 个，此前已缓存 ${res.data.cached} 个，失败 ${res.data.failed.length} 个`);
+      const stats = await audioStatsAction();
+      if (stats.ok) setAudioStats(stats.data);
     });
   };
 
@@ -90,6 +104,21 @@ export function AdminPanel({ currentUserId, initialUsers, pool }: { currentUserI
           <Button icon={<AudioLines className="h-4 w-4" />} loading={pending} onClick={backfill}>
             补齐全部发音
           </Button>
+        </div>
+        <div className="mt-4 rounded-2xl bg-slate-50 p-3.5">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-500">发音缓存覆盖</span>
+            <span className={cn("font-bold tabular-nums", audioStats.total > 0 && audioStats.cached >= audioStats.total ? "text-leaf-600" : "text-ink")}>
+              {audioStats.cached}/{audioStats.total}
+              {audioStats.total > 0 && audioStats.cached >= audioStats.total && " · 全部缓存 ✓"}
+            </span>
+          </div>
+          <ProgressBar value={audioStats.cached} max={Math.max(1, audioStats.total)} className="mt-2" barClassName={audioStats.total > 0 && audioStats.cached >= audioStats.total ? "bg-leaf-500" : "bg-ocean-500"} height="h-2" />
+          {audioStats.total > 0 && audioStats.cached < audioStats.total && (
+            <p className="mt-1.5 text-xs text-slate-400">
+              还有 {audioStats.total - audioStats.cached} 个单词没有本地发音（多为有道无录音的多词短语，播放时会自动回退系统 TTS）。
+            </p>
+          )}
         </div>
         {backfillMsg && <p className="mt-3 rounded-xl bg-ocean-50 px-3 py-2 text-xs text-ocean-700">{backfillMsg}</p>}
       </Card>

@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowUpCircle, Box, Check, Hammer, LayoutGrid, Lock, Store, Trash2, X, Zap, Sparkles, GraduationCap } from "lucide-react";
-import { BUILDING_CATALOG, ISLAND_SLOTS, canPlaceOnSlot, getBuildingDef, maxLevel, refundFor, upgradeCost, type BuildingDef, type IslandSlot } from "@/lib/game/buildings";
+import { ArrowUpCircle, Box, Check, Hammer, LayoutGrid, Lock, Move, PackageOpen, Store, Trash2, X, Zap, Sparkles, GraduationCap } from "lucide-react";
+import { BUILDING_CATALOG, ISLAND_SLOTS, canPlaceOnSlot, getBuildingDef, maxLevel, upgradeCost, type BuildingDef, type IslandSlot } from "@/lib/game/buildings";
 import type { BuildingView, IslandState } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { buildAction, removeBuildingAction, upgradeAction } from "@/server/actions";
+import { buildAction, moveBuildingAction, placeFromInventoryAction, removeBuildingAction, upgradeAction } from "@/server/actions";
 import { Button, Card, CoinIcon, Pill, ProgressBar, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { BuildingArt, BuildingPreview } from "./building-art";
@@ -164,6 +164,13 @@ export function IslandScene({ buildings, selectedId, pendingType, popId, onSlotC
 }
 
 // ---------------- View ----------------
+
+/** 解析背包建筑 itemKey：bld:<type>:L<level> */
+function parseItemKey(itemKey: string): { type: string; level: number } | null {
+  const m = /^bld:([a-z_]+):L(\d+)$/.exec(itemKey);
+  return m ? { type: m[1], level: Number(m[2]) } : null;
+}
+
 type Panel = "overview" | "shop" | "building";
 
 export function IslandView({ initial }: { initial: IslandState }) {
@@ -174,6 +181,10 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [pendingType, setPendingType] = useState<string | null>(null);
   const [pendingSlot, setPendingSlot] = useState<number | null>(null);
+  /** 移动模式：记录待移动的建筑 id */
+  const [pendingMove, setPendingMove] = useState<number | null>(null);
+  /** 背包放置模式：记录待放置的 itemKey */
+  const [pendingBackpack, setPendingBackpack] = useState<string | null>(null);
   const [popId, setPopId] = useState<number | null>(null);
   const [coinDelta, setCoinDelta] = useState<{ v: number; k: number } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -185,6 +196,7 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const { player, buildings, progress } = island;
   const selected = buildings.find((b) => b.id === selectedId) ?? null;
   const selectedDef = selected ? getBuildingDef(selected.type) : null;
+  const pendingBackpackDef = pendingBackpack ? getBuildingDef(parseItemKey(pendingBackpack)?.type ?? "") : null;
 
   useEffect(() => {
     if (!popId) return;
@@ -224,6 +236,8 @@ export function IslandView({ initial }: { initial: IslandState }) {
   };
 
   const onSlotClick = (slot: IslandSlot) => {
+    if (pendingMove) return doMove(pendingMove, slot.id);
+    if (pendingBackpack) return doPlaceBackpack(pendingBackpack, slot.id);
     if (pendingType) return doBuild(pendingType, slot.id);
     setPendingSlot(slot.id);
     setSelectedId(null);
@@ -235,8 +249,51 @@ export function IslandView({ initial }: { initial: IslandState }) {
     setSelectedId(b.id);
     setPendingType(null);
     setPendingSlot(null);
+    setPendingMove(null);
+    setPendingBackpack(null);
     setPanel("building");
     scrollPanel();
+  };
+
+  const doMove = (buildingId: number, slot: number) => {
+    startTransition(async () => {
+      const res = await moveBuildingAction(buildingId, slot);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data);
+      setPendingMove(null);
+      setPopId(buildingId);
+      toast({ kind: "success", title: "建筑已移动" });
+    });
+  };
+
+  const onBackpackPick = (itemKey: string) => {
+    if (pendingSlot) {
+      const def = getBuildingDef(parseItemKey(itemKey)?.type ?? "");
+      const slot = ISLAND_SLOTS.find((s) => s.id === pendingSlot)!;
+      if (def && !canPlaceOnSlot(def, slot)) return toast({ kind: "error", title: def.terrain === "beach" ? `${def.name}只能放在沙滩上` : `${def.name}只能放在草地上` });
+      return doPlaceBackpack(itemKey, pendingSlot);
+    }
+    setPendingBackpack(itemKey);
+    toast({ kind: "info", title: `点击岛上闪烁的空位放置${getBuildingDef(parseItemKey(itemKey)?.type ?? "")?.name ?? "建筑"}` });
+    if (typeof window !== "undefined" && window.innerWidth < 1024) window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const doPlaceBackpack = (itemKey: string, slot: number) => {
+    const def = getBuildingDef(parseItemKey(itemKey)?.type ?? "");
+    startTransition(async () => {
+      const res = await placeFromInventoryAction(itemKey, slot);
+      if (!res.ok) return toast({ kind: "error", title: res.error });
+      setIsland(res.data.island);
+      setPendingBackpack(null);
+      const nb = res.data.island.buildings.find((b) => b.slot === slot);
+      if (nb) {
+        setPopId(nb.id);
+        setSelectedId(nb.id);
+        setPanel("building");
+      }
+      toast({ kind: "success", title: `${def?.name ?? "建筑"}已从背包放置`, description: "免费放置，等级保留" });
+      for (const a of res.data.achievements) toast({ kind: "reward", title: `解锁成就「${a.title}」`, description: `+${a.reward.coins} 金币 +${a.reward.xp} XP` });
+    });
   };
 
   const onShopPick = (def: BuildingDef) => {
@@ -245,6 +302,8 @@ export function IslandView({ initial }: { initial: IslandState }) {
       if (!canPlaceOnSlot(def, slot)) return toast({ kind: "error", title: def.terrain === "beach" ? `${def.name}只能建在沙滩上` : `${def.name}只能建在草地上` });
       return doBuild(def.type, pendingSlot);
     }
+    setPendingBackpack(null);
+    setPendingMove(null);
     setPendingType(def.type);
     toast({ kind: "info", title: `点击岛上闪烁的空位放置${def.name}` });
     if (typeof window !== "undefined" && window.innerWidth < 1024) window.scrollTo({ top: 0, behavior: "smooth" });
@@ -266,22 +325,19 @@ export function IslandView({ initial }: { initial: IslandState }) {
 
   const doRemove = () => {
     if (!selected || !selectedDef) return;
-    const refund = refundFor(selectedDef, selected.level);
     confirm.confirm({
-      title: `拆除${selectedDef.name}`,
-      description: `确定拆除${selectedDef.name}吗？将返还 ${refund} 金币。`,
-      confirmLabel: "拆除",
-      variant: "danger",
+      title: `把${selectedDef.name}收进背包？`,
+      description: "建筑会收进背包（保留当前等级），之后可以在商店的「背包」区免费重新放置。",
+      confirmLabel: "收进背包",
       onConfirm: () => {
         startTransition(async () => {
-          const before = island.player.coins;
           const res = await removeBuildingAction(selected.id);
           if (!res.ok) return toast({ kind: "error", title: res.error });
           setIsland(res.data.island);
-          showDelta(before, res.data.island.player.coins);
           setSelectedId(null);
-          setPanel("overview");
-          toast({ kind: "info", title: `已拆除，返还 ${res.data.refund} 金币` });
+          setPanel("shop");
+          scrollPanel();
+          toast({ kind: "success", title: `${selectedDef.name}已收进背包` });
         });
       },
     });
@@ -290,6 +346,8 @@ export function IslandView({ initial }: { initial: IslandState }) {
   const cancelPending = () => {
     setPendingType(null);
     setPendingSlot(null);
+    setPendingMove(null);
+    setPendingBackpack(null);
   };
 
   const ownedCount = (type: string) => buildings.filter((b) => b.type === type).length;
@@ -343,11 +401,17 @@ export function IslandView({ initial }: { initial: IslandState }) {
       <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
         {/* Scene */}
         <Card className="relative overflow-hidden rounded-4xl border-0 bg-ocean-100">
-          {(pendingDef || pendingSlot) && (
+          {(pendingDef || pendingSlot || pendingMove || pendingBackpackDef) && (
             <div className="absolute inset-x-3 top-3 z-10 flex items-center justify-between gap-2 rounded-2xl bg-ink/85 px-4 py-2.5 text-sm text-white backdrop-blur">
               <span className="inline-flex items-center gap-2">
                 <Hammer className="h-4 w-4 text-sun-400" />
-                {pendingDef ? `点击闪烁的空位放置「${pendingDef.name}」` : "在右侧商店选择要建造的内容"}
+                {pendingMove
+                  ? "点击空位移动选中的建筑（地形需匹配）"
+                  : pendingBackpackDef
+                    ? `点击闪烁的空位放置背包中的「${pendingBackpackDef.name}」（免费）`
+                    : pendingDef
+                      ? `点击闪烁的空位放置「${pendingDef.name}」`
+                      : "在右侧商店选择要建造的内容"}
               </span>
               <button onClick={cancelPending} className="inline-flex items-center gap-1 rounded-lg bg-white/15 px-2 py-1 text-xs hover:bg-white/25">
                 <X className="h-3.5 w-3.5" /> 取消
@@ -356,12 +420,12 @@ export function IslandView({ initial }: { initial: IslandState }) {
           )}
           {sceneMode === "3d" ? (
             <div className="p-2">
-              <Island3D buildings={buildings} selectedId={selectedId} pendingType={pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+              <Island3D buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
             </div>
           ) : (
             <div className="overflow-x-auto no-scrollbar">
               <div className="min-w-[640px]">
-                <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
+                <IslandScene buildings={buildings} selectedId={selectedId} pendingType={pendingBackpackDef?.type ?? pendingType} popId={popId} onSlotClick={onSlotClick} onBuildingClick={onBuildingClick} />
               </div>
             </div>
           )}
@@ -418,8 +482,22 @@ export function IslandView({ initial }: { initial: IslandState }) {
                     <Sparkles className="h-4 w-4" /> 已达最高等级 Lv.{maxLevel(selectedDef)}
                   </div>
                 )}
+                <Button
+                  variant="secondary"
+                  icon={<Move className="h-4 w-4" />}
+                  loading={pending && pendingMove === selected.id}
+                  onClick={() => {
+                    setPendingMove(selected.id);
+                    setPendingType(null);
+                    setPendingBackpack(null);
+                    toast({ kind: "info", title: `点击岛上要移到的空位` });
+                    if (typeof window !== "undefined" && window.innerWidth < 1024) window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  移动
+                </Button>
                 {selected.type !== "cabin" && (
-                  <Button variant="ghost" aria-label="拆除" onClick={doRemove} disabled={pending} icon={<Trash2 className="h-4 w-4" />} />
+                  <Button variant="ghost" aria-label="收进背包" title="收进背包（保留等级，重新放置免费）" onClick={doRemove} disabled={pending} icon={<Trash2 className="h-4 w-4" />} />
                 )}
               </div>
               {upgradeCost(selectedDef, selected.level) !== null && player.coins < (upgradeCost(selectedDef, selected.level) ?? 0) && (
@@ -443,6 +521,37 @@ export function IslandView({ initial }: { initial: IslandState }) {
                 </button>
               </div>
               <div className="flex-1 space-y-4 overflow-y-auto p-3">
+                {island.backpack.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 px-2 pb-1.5 text-xs font-semibold uppercase tracking-wider text-sand-500">
+                      <PackageOpen className="h-3.5 w-3.5" /> 背包（拆除的建筑 · 免费放置）
+                    </div>
+                    <div className="space-y-1.5">
+                      {island.backpack.map((item) => {
+                        const parsed = parseItemKey(item.itemKey);
+                        const def = parsed ? getBuildingDef(parsed.type) : null;
+                        if (!parsed || !def) return null;
+                        const active = pendingBackpack === item.itemKey;
+                        return (
+                          <div key={item.itemKey} className={cn("flex items-center gap-3 rounded-2xl border p-2.5 transition", active ? "border-ocean-300 bg-ocean-50" : "border-slate-100 bg-white")}>
+                            <BuildingPreview type={parsed.type} level={parsed.level} className="h-14 w-14 shrink-0 rounded-xl bg-leaf-50" />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-sm font-semibold">{def.name}</span>
+                                <Pill tone="ocean">Lv.{parsed.level}</Pill>
+                                {item.qty > 1 && <Pill tone="slate">×{item.qty}</Pill>}
+                              </div>
+                              <div className="text-xs text-slate-400">免费放回岛上，等级保留</div>
+                            </div>
+                            <Button size="sm" variant={active ? "primary" : "soft"} disabled={emptySlots.length === 0 || pending} onClick={() => onBackpackPick(item.itemKey)}>
+                              {active ? "放置中" : "放置"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 {(["building", "decoration"] as const).map((cat) => (
                   <div key={cat}>
                     <div className="px-2 pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">{cat === "building" ? "建筑" : "装饰"}</div>
