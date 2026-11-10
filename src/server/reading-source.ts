@@ -120,11 +120,28 @@ export async function fetchConversation(limitPerSection = 3): Promise<RawArticle
 
 // ---------- The Guardian（热点） ----------
 
+/** 取 Guardian 文章 id 列表：优先 most-viewed，端点不可用时回退最新新闻搜索 */
+async function guardianArticleIds(key: string): Promise<string[]> {
+  try {
+    const raw = await httpGet(`https://content.guardianapis.com/most-viewed?api-key=${key}`);
+    const ids: string[] = JSON.parse(raw)?.response?.results?.map((r: { id: string }) => r.id) ?? [];
+    if (ids.length > 0) return ids;
+  } catch (e) {
+    console.error("[ingest] guardian most-viewed 不可用，回退最新新闻搜索", e);
+  }
+  // 注意：Guardian search 的多 section 逗号参数会返回 0 结果，因此取最新后本地按 section 白名单过滤
+  const raw = await httpGet(
+    `https://content.guardianapis.com/search?order-by=newest&page-size=15&api-key=${key}`,
+  );
+  const ALLOWED_SECTIONS = new Set(["world", "uk-news", "technology", "science", "environment", "business", "education", "global-development"]);
+  const results: { id: string; type: string; sectionId: string }[] = JSON.parse(raw)?.response?.results ?? [];
+  return results.filter((r) => r.type !== "liveblog" && ALLOWED_SECTIONS.has(r.sectionId)).map((r) => r.id);
+}
+
 export async function fetchGuardian(limit = 4): Promise<RawArticle[]> {
   const key = process.env.GUARDIAN_API_KEY;
   if (!key) throw new Error("未配置 GUARDIAN_API_KEY，无法抓取 Guardian 热点");
-  const listRaw = await httpGet(`https://content.guardianapis.com/most-viewed?api-key=${key}`);
-  const ids: string[] = JSON.parse(listRaw)?.response?.results?.map((r: { id: string }) => r.id) ?? [];
+  const ids = await guardianArticleIds(key);
   const out: RawArticle[] = [];
   for (const id of ids.slice(0, limit)) {
     try {

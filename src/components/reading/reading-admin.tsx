@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { BookOpenText, Download, FilePlus2, Globe } from "lucide-react";
 import { Button, Card, useToast } from "@/components/ui";
@@ -9,6 +10,7 @@ import { ingestArticlesAction, manualImportArticleAction } from "@/server/action
 
 export function ReadingAdminCard({ pool }: { pool: { source: string; count: number }[] }) {
   const toast = useToast();
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busySource, setBusySource] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", topic: "", url: "", author: "", text: "" });
@@ -25,6 +27,7 @@ export function ReadingAdminCard({ pool }: { pool: { source: string; count: numb
           title: `${label}完成`,
           description: `抓取 ${res.data.fetched} 篇，新入库 ${res.data.inserted} 篇${res.data.errors.length ? `，${res.data.errors.length} 条问题` : ""}`,
         });
+        router.refresh();
       } else {
         toast({ kind: "error", title: `${label}失败`, description: res.error });
       }
@@ -39,6 +42,7 @@ export function ReadingAdminCard({ pool }: { pool: { source: string; count: numb
       if (res.ok) {
         toast({ kind: "success", title: `已导入「${form.title.trim()}」` });
         setForm({ title: "", topic: "", url: "", author: "", text: "" });
+        router.refresh();
       } else {
         toast({ kind: "error", title: "导入失败", description: res.error });
       }
