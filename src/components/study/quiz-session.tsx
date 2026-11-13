@@ -355,6 +355,8 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
 
   const q = session.questions[index];
   const total = session.total;
+  // 错题复习：纯练习模式，结果不计入统计（服务端也不更新 SRS / 发奖）
+  const practiceOnly = session.kind === "wrong" || session.kind === "wrong_dictation";
 
   // 换题时重置听写尝试状态（渲染期调整，避免 effect 里 setState）
   if (dictIndex !== index) {
@@ -427,8 +429,9 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   // 答对（或重复作答）后短暂展示反馈即自动进入下一题，不再手动点「继续」；
   // 纯拼写（听写）例外：拼完后显示完整单词详情，按键或点「继续」再进入下一题；
   // 其他模式答错也保留完整反馈供复习；
-  // 主观反馈开启且本题未评价时暂停自动前进，等用户选择（或点「不再提示」）
-  const showAssess = !assessOff && result != null && !result.alreadyAnswered && assessedIndex !== index && phase === "feedback";
+  // 主观反馈开启且本题未评价时暂停自动前进，等用户选择（或点「不再提示」）；
+  // 错题练习不计统计，也就不应修改复习计划，隐藏主观反馈
+  const showAssess = !assessOff && !practiceOnly && result != null && !result.alreadyAnswered && assessedIndex !== index && phase === "feedback";
   useEffect(() => {
     if (phase !== "feedback" || !result || q?.mode === "dictation") return;
     if (!result.correct && !result.alreadyAnswered) return;
@@ -536,6 +539,11 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
             </div>
           </div>
           <div className="space-y-3 p-5">
+            {practiceOnly && (
+              <div className="rounded-2xl bg-coral-50 p-3 text-sm text-coral-600">
+                本次为错题练习：答题结果不计入统计，也没有改变单词的熟练度与复习计划。
+              </div>
+            )}
             {summary.bonusReasons.length > 0 && (
               <div className="rounded-2xl bg-sun-100/60 p-3 text-sm">
                 <div className="mb-1 flex items-center gap-1.5 font-semibold text-sun-600">
@@ -647,6 +655,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         </span>
         <span className="inline-flex items-center gap-1.5">
           {q.isNew && <Pill tone="sun">新词</Pill>}
+          {practiceOnly && <Pill tone="coral">错题练习 · 不计统计</Pill>}
           <Pill tone="ocean">{modeMeta.label}</Pill>
         </span>
       </div>

@@ -148,7 +148,19 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
   const due = dueRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus }));
   const fresh = freshRows.map((r) => ({ w: r.w, status: "new" as WordStatus }));
 
-  if (input.kind === "review") {
+  // 错题复习：从答错过（wrongCount > 0）的词里按「错误次数 × 随机权重」抽取，
+  // 高频错词更容易被抽中，但每次组合都不一样
+  if (input.kind === "wrong" || input.kind === "wrong_dictation") {
+    const wrongRows = await db
+      .select({ w: words, p: wordProgress })
+      .from(words)
+      .innerJoin(wordProgress, eq(wordProgress.wordId, words.id))
+      .where(and(deckFilter, gt(wordProgress.wrongCount, 0)))
+      .orderBy(sql`${wordProgress.wrongCount} * random() desc`)
+      .limit(size);
+    if (wrongRows.length === 0) throw new Error("还没有错题记录：先正常练习，答错的单词会出现在这里。");
+    selected = wrongRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus }));
+  } else if (input.kind === "review") {
     if (due.length === 0) throw new Error("当前没有需要复习的单词，先去学习新词吧！");
     selected = due.slice(0, size);
   } else if (input.kind === "new") {
@@ -196,7 +208,17 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
     .orderBy(sql`random()`)
     .limit(80);
 
-  const questions = selected.map((s) => buildQuestion(s.w, s.status, pool, input.kind === "dictation" ? "dictation" : undefined));
+  // 各题型的强制模式：整组听写 / 混合题型中穿插约 40% 的纯拼写听写
+  const forceModes: (QuizMode | undefined)[] = selected.map((_, i) => {
+    if (input.kind === "dictation" || input.kind === "wrong_dictation") return "dictation";
+    if (input.kind === "mixed_dictation") {
+      const dictCount = Math.min(selected.length, Math.max(1, Math.round(selected.length * 0.4)));
+      return i < dictCount ? "dictation" : undefined;
+    }
+    return undefined;
+  });
+  // 已洗牌，前 dictCount 题即随机分布的听写题；剩余题走按掌握度的正常混合题型
+  const questions = selected.map((s, i) => buildQuestion(s.w, s.status, pool, forceModes[i]));
 
   const [session] = await db
     .insert(studySessions)
@@ -264,29 +286,17 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
 
     const correct = isCorrect(q, input.answer);
     const responseMs = Math.max(0, Math.min(10 * 60_000, Math.round(input.responseMs || 0)));
+    // 错题复习是纯练习：不更新 SRS、不发奖、不计入任何统计
+    const practiceOnly = session.kind === "wrong" || session.kind === "wrong_dictation";
     const quality = gradeAnswer(correct, q.mode, responseMs, input.usedHint);
-    const next = applyReview(prev, q.mode, quality, now);
+    const next = practiceOnly ? prev : applyReview(prev, q.mode, quality, now);
 
-    await tx
-      .insert(wordProgress)
-      .values({
-        userId: uid,
-        wordId: q.wordId,
-        status: next.status,
-        proficiency: next.proficiency,
-        streak: next.streak,
-        correctCount: next.correctCount,
-        wrongCount: next.wrongCount,
-        lapses: next.lapses,
-        intervalMinutes: next.intervalMinutes,
-        lastReviewedAt: now,
-        nextReviewAt: next.nextReviewAt,
-        firstLearnedAt: now,
-        masteredAt: next.status === "mastered" ? now : null,
-      })
-      .onConflictDoUpdate({
-        target: wordProgress.wordId,
-        set: {
+    if (!practiceOnly) {
+      await tx
+        .insert(wordProgress)
+        .values({
+          userId: uid,
+          wordId: q.wordId,
           status: next.status,
           proficiency: next.proficiency,
           streak: next.streak,
@@ -296,16 +306,32 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
           intervalMinutes: next.intervalMinutes,
           lastReviewedAt: now,
           nextReviewAt: next.nextReviewAt,
-          firstLearnedAt: sql`coalesce(${wordProgress.firstLearnedAt}, ${now.toISOString()}::timestamptz)`,
-          masteredAt: next.status === "mastered" ? sql`coalesce(${wordProgress.masteredAt}, ${now.toISOString()}::timestamptz)` : null,
-        },
-      });
+          firstLearnedAt: now,
+          masteredAt: next.status === "mastered" ? now : null,
+        })
+        .onConflictDoUpdate({
+          target: wordProgress.wordId,
+          set: {
+            status: next.status,
+            proficiency: next.proficiency,
+            streak: next.streak,
+            correctCount: next.correctCount,
+            wrongCount: next.wrongCount,
+            lapses: next.lapses,
+            intervalMinutes: next.intervalMinutes,
+            lastReviewedAt: now,
+            nextReviewAt: next.nextReviewAt,
+            firstLearnedAt: sql`coalesce(${wordProgress.firstLearnedAt}, ${now.toISOString()}::timestamptz)`,
+            masteredAt: next.status === "mastered" ? sql`coalesce(${wordProgress.masteredAt}, ${now.toISOString()}::timestamptz)` : null,
+          },
+        });
 
-    await tx.insert(reviewLogs).values({ userId: uid, wordId: q.wordId, sessionId: session.id, mode: q.mode, correct, quality, responseMs });
+      await tx.insert(reviewLogs).values({ userId: uid, wordId: q.wordId, sessionId: session.id, mode: q.mode, correct, quality, responseMs });
+    }
 
     const sessionStreak = correct ? session.currentStreak + 1 : 0;
     const isReview = prev.status === "review" || prev.status === "mastered";
-    const reward = answerReward({ quality, isNew: q.isNew, isReview, streakAfter: sessionStreak });
+    const reward = practiceOnly ? { coins: 0, xp: 0, streakBonus: 0 } : answerReward({ quality, isNew: q.isNew, isReview, streakAfter: sessionStreak });
     const coinsTotal = reward.coins + reward.streakBonus;
 
     const questions = session.questions.map((item, i) => (i === input.index ? { ...item, answered: true, wasCorrect: correct } : item));
@@ -324,6 +350,25 @@ export async function submitAnswer(input: SubmitAnswerInput): Promise<AnswerResu
 
     const player = await lockPlayer(tx, uid);
     const today = dateKey(now);
+
+    if (practiceOnly) {
+      return {
+        correct,
+        correctAnswer: q.correct,
+        word: toDetail(word),
+        reward,
+        quality,
+        sessionStreak,
+        player: snapshot(player),
+        leveledUp: false,
+        statusBefore: prev.status,
+        statusAfter: prev.status,
+        proficiency: prev.proficiency,
+        nextReviewAt: prev.nextReviewAt?.toISOString() ?? null,
+        alreadyAnswered: false,
+      };
+    }
+
     const streakInfo = nextStreak(player, today);
     const [updated] = await tx
       .update(players)
@@ -402,7 +447,9 @@ export async function finishSession(sessionId: number): Promise<SessionSummary> 
       };
     }
 
-    const bonus = sessionBonus({ total: session.total, answered: session.answered, correct: session.correct });
+    // 错题复习结算：不结算完成奖励、不更新玩家数据与每日统计、不触发成就
+    const practiceOnly = session.kind === "wrong" || session.kind === "wrong_dictation";
+    const bonus = practiceOnly ? { coins: 0, xp: 0, reasons: [] as string[] } : sessionBonus({ total: session.total, answered: session.answered, correct: session.correct });
     const completed = session.answered >= session.total;
 
     await tx
@@ -417,16 +464,19 @@ export async function finishSession(sessionId: number): Promise<SessionSummary> 
       .where(eq(studySessions.id, session.id));
 
     const levelBefore = levelFromXp(player.xp).level;
-    if (bonus.coins || bonus.xp) {
-      await tx
-        .update(players)
-        .set({ coins: player.coins + bonus.coins, xp: player.xp + bonus.xp })
-        .where(eq(players.id, player.id));
-    }
-    await bumpDaily(tx, uid, today, { sessionsCompleted: completed ? 1 : 0, coinsEarned: bonus.coins, xpEarned: bonus.xp });
+    let newAchievements: Awaited<ReturnType<typeof checkAchievements>> = [];
+    if (!practiceOnly) {
+      if (bonus.coins || bonus.xp) {
+        await tx
+          .update(players)
+          .set({ coins: player.coins + bonus.coins, xp: player.xp + bonus.xp })
+          .where(eq(players.id, player.id));
+      }
+      await bumpDaily(tx, uid, today, { sessionsCompleted: completed ? 1 : 0, coinsEarned: bonus.coins, xpEarned: bonus.xp });
 
-    const perfectSession = completed && session.total >= 10 && session.correct === session.total;
-    const newAchievements = await checkAchievements(tx, uid, { perfectSession });
+      const perfectSession = completed && session.total >= 10 && session.correct === session.total;
+      newAchievements = await checkAchievements(tx, uid, { perfectSession });
+    }
 
     const [finalPlayer] = await tx.select().from(players).where(eq(players.id, player.id));
     const tasks = await getDailyTasks(tx, uid, finalPlayer.dailyGoal, today);
@@ -452,7 +502,7 @@ export async function finishSession(sessionId: number): Promise<SessionSummary> 
   });
 }
 
-export async function countDue(deckId: number | null = null): Promise<{ due: number; fresh: number }> {
+export async function countDue(deckId: number | null = null): Promise<{ due: number; fresh: number; wrong: number }> {
   await ensureSeeded();
   const uid = await currentUserId();
   const deckFilter = deckId ? and(eq(words.deckId, deckId), eq(words.userId, uid)) : eq(words.userId, uid);
@@ -466,7 +516,12 @@ export async function countDue(deckId: number | null = null): Promise<{ due: num
     .from(words)
     .leftJoin(wordProgress, eq(wordProgress.wordId, words.id))
     .where(and(deckFilter, or(isNull(wordProgress.id), eq(wordProgress.status, "new"))));
-  return { due: dueRow?.count ?? 0, fresh: freshRow?.count ?? 0 };
+  const [wrongRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(words)
+    .innerJoin(wordProgress, eq(wordProgress.wordId, words.id))
+    .where(and(deckFilter, gt(wordProgress.wrongCount, 0)));
+  return { due: dueRow?.count ?? 0, fresh: freshRow?.count ?? 0, wrong: wrongRow?.count ?? 0 };
 }
 
 export type { QuizMode };

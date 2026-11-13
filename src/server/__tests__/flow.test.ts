@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { db, pool } from "@/db";
-import { studySessions } from "@/db/schema";
+import { players, reviewLogs, studySessions, wordProgress } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { createUserAccount } from "../auth";
 import { ensureSeeded, getPlayer, resetSeededFlagForTest } from "../player";
 import { __setUserForTest } from "../session";
-import { createSession, finishSession, submitAnswer } from "../study";
+import { countDue, createSession, finishSession, submitAnswer } from "../study";
 import { buildAt, getIsland, upgradeBuilding } from "../island";
 import { claimTask, getDailyTasks } from "../tasks";
 import { deleteDeck, exportDeck, getWords, importWords, listDecks } from "../vocab";
@@ -168,5 +168,74 @@ Serendipity,,n.,重复,,,
     expect((await listDecks()).some((d) => d.id === result.deckId)).toBe(false);
     // 删除不存在的词库应报错（内置词库现已允许删除）
     await expect(deleteDeck(result.deckId)).rejects.toThrow("词库不存在");
+  });
+
+  it("混合+听写穿插听写题；错题复习不计入统计", async () => {
+    // 延续第一个用例的状态：答错了 2 个词，错题池应有这 2 个词
+    const totals = await countDue(null);
+    expect(totals.wrong).toBe(2);
+
+    // 混合+听写：约 40% 的题为纯拼写听写，其余按掌握度混合出题
+    const md = await createSession({ deckId: null, kind: "mixed_dictation", size: 10 });
+    expect(md.questions).toHaveLength(10);
+    expect(md.questions.filter((q) => q.mode === "dictation")).toHaveLength(4);
+    expect(md.questions.some((q) => q.mode !== "dictation")).toBe(true);
+
+    // 错题复习：只从答错过（wrongCount > 0）的词里随机抽取
+    const wrongSession = await createSession({ deckId: null, kind: "wrong", size: 5 });
+    expect(wrongSession.questions).toHaveLength(2);
+    expect(wrongSession.questions.every((q) => q.mode !== "dictation")).toBe(true);
+
+    const playerBefore = await getPlayer();
+    const dashBefore = await getDashboard();
+    const [logsBefore] = await db.select({ count: sql<number>`count(*)::int` }).from(reviewLogs);
+
+    const [stored] = await db.select().from(studySessions).where(eq(studySessions.id, wrongSession.id));
+    const wpBefore = (await db.select().from(wordProgress).where(eq(wordProgress.wordId, stored.questions[0].wordId)))[0];
+    expect(wpBefore.wrongCount).toBeGreaterThan(0);
+
+    // 答错：不发奖、不扣熟练度、不计错误次数
+    const q0 = stored.questions[0];
+    const wrongAnswer = q0.options?.length ? q0.options.find((o) => o !== q0.correct)! : "zzz-nope";
+    const resWrong = await submitAnswer({ sessionId: wrongSession.id, index: 0, answer: wrongAnswer, responseMs: 1000, usedHint: false });
+    expect(resWrong.correct).toBe(false);
+    expect(resWrong.reward).toEqual({ coins: 0, xp: 0, streakBonus: 0 });
+    expect(resWrong.statusAfter).toBe(resWrong.statusBefore);
+    expect(resWrong.player.coins).toBe(playerBefore.coins);
+
+    // 答对：同样不发奖、不更新玩家统计
+    const resRight = await submitAnswer({ sessionId: wrongSession.id, index: 1, answer: stored.questions[1].correct, responseMs: 1000, usedHint: false });
+    expect(resRight.correct).toBe(true);
+    expect(resRight.reward.coins).toBe(0);
+    expect(resRight.player.coins).toBe(playerBefore.coins);
+    const [pBefore] = await db.select().from(players).where(eq(players.id, testerId));
+
+    const wpAfter = (await db.select().from(wordProgress).where(eq(wordProgress.wordId, stored.questions[0].wordId)))[0];
+    expect(wpAfter.wrongCount).toBe(wpBefore.wrongCount);
+    expect(wpAfter.proficiency).toBe(wpBefore.proficiency);
+    expect(wpAfter.nextReviewAt?.getTime()).toBe(wpBefore.nextReviewAt?.getTime());
+
+    // 结算：无完成奖励，玩家数据、每日统计与复习日志都不变
+    const summary = await finishSession(wrongSession.id);
+    expect(summary.bonusCoins).toBe(0);
+    expect(summary.bonusXp).toBe(0);
+    expect(summary.coinsEarned).toBe(0);
+
+    const playerAfter = await getPlayer();
+    expect(playerAfter.coins).toBe(playerBefore.coins);
+    expect(playerAfter.xp).toBe(playerBefore.xp);
+    const [pAfter] = await db.select().from(players).where(eq(players.id, testerId));
+    expect(pAfter.totalAnswered).toBe(pBefore.totalAnswered);
+    expect(pAfter.totalCorrect).toBe(pBefore.totalCorrect);
+    expect(pAfter.lastStudyDate).toBe(pBefore.lastStudyDate);
+    const [logsAfter] = await db.select({ count: sql<number>`count(*)::int` }).from(reviewLogs);
+    expect(logsAfter.count).toBe(logsBefore.count);
+    const dashAfter = await getDashboard();
+    expect(dashAfter.today.total).toBe(dashBefore.today.total);
+
+    // 纯拼写错题复习：整组听写
+    const wd = await createSession({ deckId: null, kind: "wrong_dictation", size: 5 });
+    expect(wd.questions).toHaveLength(2);
+    expect(wd.questions.every((q) => q.mode === "dictation")).toBe(true);
   });
 });

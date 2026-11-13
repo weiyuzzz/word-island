@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { BookOpen, Brain, Check, Keyboard, Play, Shuffle, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Check, Ear, Keyboard, Play, Shuffle, Sparkles, Target } from "lucide-react";
 import type { ClientSession, DeckSummary, SessionKind } from "@/lib/types";
 import { SESSION_SIZES } from "@/lib/game/economy";
 import { MODE_META } from "@/lib/game/srs";
@@ -15,20 +15,30 @@ interface Props {
   decks: DeckSummary[];
   initialDeckId: number | null;
   initialKind: SessionKind;
-  totals: { due: number; fresh: number };
+  totals: { due: number; fresh: number; wrong: number };
 }
 
 const KINDS: { key: SessionKind; title: string; desc: string; icon: typeof Shuffle }[] = [
   { key: "mixed", title: "混合练习", desc: "待复习 + 新词，智能搭配（推荐）", icon: Shuffle },
+  { key: "mixed_dictation", title: "混合+听写", desc: "混合题型，穿插纯拼写听写", icon: Ear },
   { key: "review", title: "只复习", desc: "巩固到期的单词", icon: Brain },
   { key: "new", title: "只学新词", desc: "认识新的单词", icon: Sparkles },
   { key: "dictation", title: "纯拼写", desc: "听发音逐字母拼写（听写模式）", icon: Keyboard },
+  { key: "wrong", title: "错题复习", desc: "随机抽高频错词，不计统计", icon: Target },
+];
+
+/** 错题复习的练习方式：正常混合题型，或整组纯拼写听写 */
+const WRONG_STYLES: { key: "mixed" | "dictation"; title: string; desc: string }[] = [
+  { key: "mixed", title: "正常题型", desc: "选词 + 拼写混合出题" },
+  { key: "dictation", title: "纯拼写", desc: "听发音逐字母听写" },
 ];
 
 export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Props) {
   const toast = useToast();
   const [deckId, setDeckId] = useState<number | null>(initialDeckId);
   const [kind, setKind] = useState<SessionKind>(initialKind);
+  // 错题复习的练习方式（仅在选中「错题复习」时生效）
+  const [wrongStyle, setWrongStyle] = useState<"mixed" | "dictation">("mixed");
   const [size, setSize] = useState<number>(10);
   const [customSize, setCustomSize] = useState<string>("");
   const [session, setSession] = useState<ClientSession | null>(null);
@@ -37,11 +47,13 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
   const currentDeck = decks.find((d) => d.id === deckId) ?? null;
   const due = currentDeck ? currentDeck.due : totals.due;
   const fresh = currentDeck ? currentDeck.total - currentDeck.learned : totals.fresh;
+  const wrongCount = currentDeck ? currentDeck.wrong : totals.wrong;
   const totalWords = decks.reduce((n, d) => n + d.total, 0);
 
   const start = () => {
+    const effKind: SessionKind = kind === "wrong" ? (wrongStyle === "dictation" ? "wrong_dictation" : "wrong") : kind;
     startTransition(async () => {
-      const res = await startSessionAction({ deckId, kind, size });
+      const res = await startSessionAction({ deckId, kind: effKind, size });
       if (!res.ok) return toast({ kind: "error", title: res.error });
       setSession(res.data);
       window.scrollTo({ top: 0 });
@@ -76,16 +88,16 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
 
       <section>
         <div className="mb-2 text-sm font-semibold text-slate-600">学习方式</div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {KINDS.map((k) => {
             const active = kind === k.key;
-            const count = k.key === "review" ? due : k.key === "new" ? fresh : null;
-            const disabled = (k.key === "review" && due === 0) || (k.key === "new" && fresh === 0);
+            const count = k.key === "review" ? due : k.key === "new" ? fresh : k.key === "wrong" ? wrongCount : null;
+            const disabled = (k.key === "review" && due === 0) || (k.key === "new" && fresh === 0) || (k.key === "wrong" && wrongCount === 0);
             return (
               <button key={k.key} type="button" disabled={disabled} onClick={() => setKind(k.key)} className={cn("relative rounded-2xl border-2 p-4 text-left transition disabled:opacity-50", active ? "border-ocean-500 bg-ocean-50" : "border-slate-200 bg-white hover:border-ocean-200")}>
                 <div className="flex items-center justify-between">
                   <k.icon className={cn("h-5 w-5", active ? "text-ocean-600" : "text-slate-400")} />
-                  {count !== null && <Pill tone={active ? "ocean" : "slate"}>{count}</Pill>}
+                  {count !== null && <Pill tone={active ? "ocean" : k.key === "wrong" ? "coral" : "slate"}>{count}</Pill>}
                 </div>
                 <div className="mt-2 text-sm font-semibold">{k.title}</div>
                 <div className="text-xs text-slate-500">{k.desc}</div>
@@ -99,6 +111,24 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
           })}
         </div>
       </section>
+
+      {kind === "wrong" && (
+        <section>
+          <div className="mb-2 text-sm font-semibold text-slate-600">错题练习方式</div>
+          <div className="flex flex-wrap gap-2">
+            {WRONG_STYLES.map((s) => {
+              const active = wrongStyle === s.key;
+              return (
+                <button key={s.key} type="button" onClick={() => setWrongStyle(s.key)} className={cn("rounded-2xl border px-3.5 py-2 text-left transition", active ? "border-ocean-500 bg-ocean-50" : "border-slate-200 bg-white hover:border-ocean-300")}>
+                  <div className={cn("text-sm font-medium", active && "text-ocean-600")}>{s.title}</div>
+                  <div className="text-xs text-slate-500">{s.desc}</div>
+                </button>
+              );
+            })}
+            <span className="inline-flex items-center rounded-2xl bg-coral-50 px-3 py-2 text-xs text-coral-500">错题练习的结果不计入统计，也不会改变复习计划</span>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="mb-2 text-sm font-semibold text-slate-600">选择词库</div>

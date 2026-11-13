@@ -2,7 +2,11 @@ import type { WordInput } from "@/lib/vocab/parse";
 
 export type WordStatus = "new" | "learning" | "review" | "mastered";
 export type QuizMode = "en2zh" | "zh2en" | "spelling" | "context" | "listen" | "synonym" | "antonym" | "sentence" | "dictation";
-export type SessionKind = "mixed" | "review" | "new" | "dictation";
+/**
+ * mixed 混合练习；mixed_dictation 混合题型 + 穿插纯拼写听写；
+ * wrong / wrong_dictation 高频错词随机复习（正常题型 / 全听写），结果不计入统计。
+ */
+export type SessionKind = "mixed" | "mixed_dictation" | "review" | "new" | "dictation" | "wrong" | "wrong_dictation";
 
 /** 存在数据库里的题目记录（包含正确答案，不会原样发给客户端） */
 export interface QuestionRecord {

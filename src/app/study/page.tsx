@@ -11,11 +11,12 @@ export default async function StudyPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const deckParam = typeof params.deck === "string" ? Number(params.deck) : NaN;
   const kindParam = typeof params.kind === "string" ? params.kind : "mixed";
-  const kind: SessionKind = kindParam === "review" || kindParam === "new" || kindParam === "dictation" ? kindParam : "mixed";
+  const kind: SessionKind = ["review", "new", "dictation", "mixed_dictation", "wrong", "wrong_dictation"].includes(kindParam) ? (kindParam as SessionKind) : "mixed";
 
   const [decks, totals] = await Promise.all([listDecks(), countDue(null)]);
   const initialDeckId = Number.isFinite(deckParam) && decks.some((d) => d.id === deckParam) ? deckParam : null;
-  const initialKind: SessionKind = kind === "review" && totals.due === 0 ? "mixed" : kind;
+  const initialKind: SessionKind =
+    (kind === "review" && totals.due === 0) || ((kind === "wrong" || kind === "wrong_dictation") && totals.wrong === 0) ? "mixed" : kind;
 
   return <StudyLauncher decks={decks} initialDeckId={initialDeckId} initialKind={initialKind} totals={totals} />;
 }
