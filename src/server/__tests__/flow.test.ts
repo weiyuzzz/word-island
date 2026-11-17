@@ -170,16 +170,15 @@ Serendipity,,n.,重复,,,
     await expect(deleteDeck(result.deckId)).rejects.toThrow("词库不存在");
   });
 
-  it("混合+听写穿插听写题；错题复习不计入统计", async () => {
+  it("纯听写（待复习+新词）全部为听写题；错题复习不计入统计", async () => {
     // 延续第一个用例的状态：答错了 2 个词，错题池应有这 2 个词
     const totals = await countDue(null);
     expect(totals.wrong).toBe(2);
 
-    // 混合+听写：约 40% 的题为纯拼写听写，其余按掌握度混合出题
+    // 纯听写 mixed_dictation：选词只来自待复习 + 新词，且全部为逐字母听写
     const md = await createSession({ deckId: null, kind: "mixed_dictation", size: 10 });
     expect(md.questions).toHaveLength(10);
-    expect(md.questions.filter((q) => q.mode === "dictation")).toHaveLength(4);
-    expect(md.questions.some((q) => q.mode !== "dictation")).toBe(true);
+    expect(md.questions.every((q) => q.mode === "dictation")).toBe(true);
 
     // 错题复习：只从答错过（wrongCount > 0）的词里随机抽取
     const wrongSession = await createSession({ deckId: null, kind: "wrong", size: 5 });

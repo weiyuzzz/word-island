@@ -88,8 +88,9 @@ function buildQuestion(word: WordRow, status: WordStatus, pool: WordRow[], force
   return { wordId: word.id, mode, options: [], correct: word.word, prompt: blank?.blanked ?? null, isNew: status === "new", answered: false, wasCorrect: null };
 }
 
-function toClientQuestion(q: QuestionRecord, w: WordRow, index: number): ClientQuestion {
-  const base: ClientQuestion = { index, wordId: q.wordId, mode: q.mode, isNew: q.isNew };
+function toClientQuestion(q: QuestionRecord, w: WordRow, index: number, proficiency: number): ClientQuestion {
+  // speakWord 始终带上标准拼写，供所有题型在单词出现时自动朗读；题干是否显示英文仍由各分支决定。
+  const base: ClientQuestion = { index, wordId: q.wordId, mode: q.mode, isNew: q.isNew, speakWord: w.word, proficiency };
   switch (q.mode) {
     case "en2zh":
       return { ...base, word: w.word, phonetic: w.phonetic, pos: w.pos, options: q.options };
@@ -144,9 +145,9 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
     .orderBy(asc(words.difficulty), asc(words.id))
     .limit(size);
 
-  let selected: { w: WordRow; status: WordStatus }[] = [];
-  const due = dueRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus }));
-  const fresh = freshRows.map((r) => ({ w: r.w, status: "new" as WordStatus }));
+  let selected: { w: WordRow; status: WordStatus; proficiency: number }[] = [];
+  const due = dueRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus, proficiency: r.p.proficiency }));
+  const fresh = freshRows.map((r) => ({ w: r.w, status: "new" as WordStatus, proficiency: r.p?.proficiency ?? 0 }));
 
   // 错题复习：从答错过（wrongCount > 0）的词里按「错误次数 × 随机权重」抽取，
   // 高频错词更容易被抽中，但每次组合都不一样
@@ -159,13 +160,25 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
       .orderBy(sql`${wordProgress.wrongCount} * random() desc`)
       .limit(size);
     if (wrongRows.length === 0) throw new Error("还没有错题记录：先正常练习，答错的单词会出现在这里。");
-    selected = wrongRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus }));
+    selected = wrongRows.map((r) => ({ w: r.w, status: r.p.status as WordStatus, proficiency: r.p.proficiency }));
   } else if (input.kind === "review") {
     if (due.length === 0) throw new Error("当前没有需要复习的单词，先去学习新词吧！");
     selected = due.slice(0, size);
   } else if (input.kind === "new") {
     if (fresh.length === 0) throw new Error("这个词库的单词都已经学过了，去复习或导入新词吧！");
     selected = fresh.slice(0, size);
+  } else if (input.kind === "mixed_dictation") {
+    // 纯听写：选词严格限定为「待复习 + 新词」组合，不足时也不借未到期的复习词兜底
+    const reviewCount = Math.min(due.length, Math.ceil(size * 0.6));
+    const newCount = Math.min(fresh.length, size - reviewCount);
+    selected = [...due.slice(0, reviewCount), ...fresh.slice(0, newCount)];
+    if (selected.length < size) {
+      const extraDue = due.slice(reviewCount, reviewCount + (size - selected.length));
+      selected.push(...extraDue);
+    }
+    if (selected.length === 0) {
+      throw new Error("当前没有待复习或新词，先去导入新词或稍后再来吧！");
+    }
   } else {
     const reviewCount = Math.min(due.length, Math.ceil(size * 0.6));
     const newCount = Math.min(fresh.length, size - reviewCount);
@@ -190,7 +203,7 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
         )
         .orderBy(asc(wordProgress.nextReviewAt))
         .limit(size - selected.length);
-      selected.push(...upcoming.map((r) => ({ w: r.w, status: r.p.status as WordStatus })));
+      selected.push(...upcoming.map((r) => ({ w: r.w, status: r.p.status as WordStatus, proficiency: r.p.proficiency })));
     }
     if (selected.length === 0) {
       const [cnt] = await db.select({ count: sql<number>`count(*)::int` }).from(words).where(deckFilter);
@@ -208,16 +221,11 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
     .orderBy(sql`random()`)
     .limit(80);
 
-  // 各题型的强制模式：整组听写 / 混合题型中穿插约 40% 的纯拼写听写
-  const forceModes: (QuizMode | undefined)[] = selected.map((_, i) => {
-    if (input.kind === "dictation" || input.kind === "wrong_dictation") return "dictation";
-    if (input.kind === "mixed_dictation") {
-      const dictCount = Math.min(selected.length, Math.max(1, Math.round(selected.length * 0.4)));
-      return i < dictCount ? "dictation" : undefined;
-    }
+  // 各题型的强制模式：dictation / wrong_dictation / mixed_dictation 均为整组纯拼写听写
+  const forceModes: (QuizMode | undefined)[] = selected.map(() => {
+    if (input.kind === "dictation" || input.kind === "wrong_dictation" || input.kind === "mixed_dictation") return "dictation";
     return undefined;
   });
-  // 已洗牌，前 dictCount 题即随机分布的听写题；剩余题走按掌握度的正常混合题型
   const questions = selected.map((s, i) => buildQuestion(s.w, s.status, pool, forceModes[i]));
 
   const [session] = await db
@@ -226,12 +234,13 @@ export async function createSession(input: CreateSessionInput): Promise<ClientSe
     .returning();
 
   const wordMap = new Map(selected.map((s) => [s.w.id, s.w]));
+  const proficiencyMap = new Map(selected.map((s) => [s.w.id, s.proficiency]));
   return {
     id: session.id,
     kind: input.kind,
     deckName,
     total: questions.length,
-    questions: questions.map((q, i) => toClientQuestion(q, wordMap.get(q.wordId)!, i)),
+    questions: questions.map((q, i) => toClientQuestion(q, wordMap.get(q.wordId)!, i, proficiencyMap.get(q.wordId) ?? 0)),
   };
 }
 

@@ -668,11 +668,12 @@ export interface LookupResult {
   meaningLang: "zh" | "en";
   inVocab: boolean;
   status?: string;
+  proficiency?: number;
 }
 
 async function lookupInUserVocab(uid: number, key: string, lemma: string) {
   const [row] = await db
-    .select({ id: words.id, word: words.word, phonetic: words.phonetic, pos: words.pos, meaning: words.meaning, status: wordProgress.status })
+    .select({ id: words.id, word: words.word, phonetic: words.phonetic, pos: words.pos, meaning: words.meaning, status: wordProgress.status, proficiency: wordProgress.proficiency })
     .from(words)
     .leftJoin(wordProgress, eq(wordProgress.wordId, words.id))
     .where(and(eq(words.userId, uid), or(eq(words.wordKey, key), eq(words.wordKey, lemma))!))
@@ -717,7 +718,7 @@ export async function lookupWord(word: string): Promise<LookupResult | null> {
   const lemma = lemmatize(word);
   const mine = await lookupInUserVocab(uid, key, lemma);
   if (mine) {
-    return { word: mine.word, phonetic: mine.phonetic, pos: mine.pos, meaning: mine.meaning, meaningLang: "zh", inVocab: true, status: mine.status ?? "new" };
+    return { word: mine.word, phonetic: mine.phonetic, pos: mine.pos, meaning: mine.meaning, meaningLang: "zh", inVocab: true, status: mine.status ?? "new", proficiency: mine.proficiency ?? 0 };
   }
   const builtin = lookupInBuiltin(key, lemma);
   if (builtin) return { ...builtin, inVocab: false };

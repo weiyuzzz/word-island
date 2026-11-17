@@ -3,7 +3,8 @@ import type { WordInput } from "@/lib/vocab/parse";
 export type WordStatus = "new" | "learning" | "review" | "mastered";
 export type QuizMode = "en2zh" | "zh2en" | "spelling" | "context" | "listen" | "synonym" | "antonym" | "sentence" | "dictation";
 /**
- * mixed 混合练习；mixed_dictation 混合题型 + 穿插纯拼写听写；
+ * mixed 混合练习；mixed_dictation 纯听写（仅从待复习 + 新词组合出题，全部逐字母听写）；
+ * dictation 纯拼写（选词范围更广：含未来到期词兜底）；
  * wrong / wrong_dictation 高频错词随机复习（正常题型 / 全听写），结果不计入统计。
  */
 export type SessionKind = "mixed" | "mixed_dictation" | "review" | "new" | "dictation" | "wrong" | "wrong_dictation";
@@ -27,6 +28,10 @@ export interface ClientQuestion {
   mode: QuizMode;
   isNew: boolean;
   word?: string;
+  /** 始终为本词的标准拼写，仅用于题目出现时自动朗读（含题干不显示英文的题型） */
+  speakWord?: string;
+  /** 本词当前熟练度（0~100），用于题干上的认识/熟悉分级标签 */
+  proficiency?: number;
   phonetic?: string;
   pos?: string;
   meaning?: string;

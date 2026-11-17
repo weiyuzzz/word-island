@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, Eraser, Highlighter, NotebookPen, Plus, Sparkles, Volume2, X } from "lucide-react";
-import { Button, Modal, Pill, SpeakButton, useToast } from "@/components/ui";
-import { cn } from "@/lib/utils";
+import { Button, FamiliarityTag, Modal, Pill, SpeakButton, speak, useToast } from "@/components/ui";
+import { cn, normalizeWord } from "@/lib/utils";
 import { NOTE_TYPE_LABEL, baseWord, looksLikeLongSentence, tokenizeParagraph, type NoteType } from "@/lib/reading/text";
 import { addReadingWordAction, analyzeSentenceAIAction, deleteNoteAction, finishArticleAction, lookupWordAction, noteFamiliarityAction, removeHighlightAction, saveHighlightAction, saveNoteAction, saveReadingProgressAction } from "@/server/actions";
 import type { ArticleView, FinishResult, LookupResult } from "@/server/reading";
@@ -203,8 +203,11 @@ export function ReaderView({ initial, aiEnabled }: { initial: ArticleView; aiEna
   // ---------- 词卡 ----------
 
   const openWord = async (word: string, x: number, y: number) => {
+    // 词卡出现时先念一遍（用点击到的词形；查词结果返回后如为标准词形再补念一次）
+    speak(word);
     setWordPopover({ word, x, y, loading: true, data: null });
     const res = await lookupWordAction(word);
+    if (res.ok && res.data && normalizeWord(res.data.word) !== normalizeWord(word)) speak(res.data.word);
     setWordPopover((cur) => (cur && cur.word === word ? { ...cur, loading: false, data: res.ok ? res.data : null } : cur));
   };
 
@@ -453,8 +456,11 @@ export function ReaderView({ initial, aiEnabled }: { initial: ArticleView; aiEna
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-lg font-bold leading-tight">{wordPopover.word}</div>
-                {wordPopover.data?.phonetic && <div className="text-xs text-slate-400">{wordPopover.data.phonetic}</div>}
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold leading-tight">{wordPopover.word}</span>
+                  {wordPopover.data?.inVocab && <FamiliarityTag proficiency={wordPopover.data.proficiency ?? 0} />}
+                </div>
+                {wordPopover.data?.phonetic && <div className="mt-0.5 text-xs text-slate-400">{wordPopover.data.phonetic}</div>}
               </div>
               <SpeakButton text={wordPopover.word} size="sm" />
             </div>

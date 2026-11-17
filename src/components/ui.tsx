@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { CheckCircle2, Info, Loader2, Volume2, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { proficiencyLabel } from "@/lib/game/srs";
 
 // ---------- Button ----------
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "soft" | "sun";
@@ -96,6 +97,21 @@ export function Pill({ tone = "slate", className, children }: { tone?: Tone; cla
 }
 
 export const STATUS_TONE: Record<string, Tone> = { new: "slate", learning: "sun", review: "ocean", mastered: "leaf" };
+
+/**
+ * 熟练度分级标签：直接复用 srs 的 proficiencyLabel 文案，按熟练度数值配递进色。
+ * 用于题目出现时、单词详细翻译卡上，直观呈现「认识 / 熟悉」等掌握程度。
+ */
+export function FamiliarityTag({ proficiency, className, showValue = false }: { proficiency: number; className?: string; showValue?: boolean }) {
+  const p = Math.max(0, Math.min(100, Number.isFinite(proficiency) ? proficiency : 0));
+  const tone: Tone = p >= 85 ? "leaf" : p >= 60 ? "ocean" : p >= 40 ? "sun" : p > 0 ? "sand" : "slate";
+  return (
+    <Pill tone={tone} className={className}>
+      {proficiencyLabel(p)}
+      {showValue && <span className="ml-0.5 opacity-60 tabular-nums">{p}%</span>}
+    </Pill>
+  );
+}
 
 // ---------- Modal (bottom sheet on mobile) ----------
 export function Modal({ open, onClose, title, children, footer, size = "md" }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; footer?: ReactNode; size?: "md" | "lg" }) {

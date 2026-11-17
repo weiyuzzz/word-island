@@ -10,7 +10,7 @@ import { ATTACK } from "@/lib/game/questions";
 import { MODE_META, STATUS_META } from "@/lib/game/srs";
 import { cn, formatRelativeTime, findWordInSentence } from "@/lib/utils";
 import { finishExplorationAction, resolveEventAction } from "@/server/game-actions";
-import { Button, Card, CoinIcon, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
+import { Button, Card, CoinIcon, FamiliarityTag, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
 import { MonsterArt } from "./monster-art";
 import { BattleScene } from "./battle-scene";
 
@@ -200,8 +200,9 @@ function WordExplanation({ result }: { result: EventResult }) {
             <ArrowRight className="h-3 w-3 text-slate-400" />
             <Pill tone={STATUS_TONE[result.statusAfter]}>{STATUS_META[result.statusAfter].label}</Pill>
           </div>
-          <div className="mt-1 text-slate-400">
-            熟练度 {result.proficiency}% · 下次复习 {formatRelativeTime(result.nextReviewAt)}
+          <div className="mt-1 flex items-center justify-end gap-1.5">
+            <FamiliarityTag proficiency={result.proficiency} />
+            <span className="text-slate-400">下次复习 {formatRelativeTime(result.nextReviewAt)}</span>
           </div>
         </div>
       </div>
@@ -274,9 +275,13 @@ export function ExpeditionRun({ initial, onExit }: Props) {
   useEffect(() => {
     startRef.current = Date.now();
     if (q?.mode === "spelling") setTimeout(() => inputRef.current?.focus(), 50);
-    if (q?.mode === "listen" && q.word) setTimeout(() => speak(q.word ?? ""), 250);
+    // 每道题出现时自动朗读一遍目标单词（所有题型），换题才触发，重试不重复。
+    if (q?.speakWord) {
+      const t = setTimeout(() => speak(q.speakWord ?? ""), 250);
+      return () => clearTimeout(t);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursor, q?.index]);
+  }, [cursor, q?.index, q?.speakWord]);
 
   const finish = useCallback(() => {
     startTransition(async () => {
@@ -584,6 +589,9 @@ export function ExpeditionRun({ initial, onExit }: Props) {
           </div>
         ) : q ? (
           <div className="p-5 md:p-6">
+            <div className="mb-3 flex justify-center">
+              <FamiliarityTag proficiency={q.proficiency ?? 0} showValue />
+            </div>
             <QuestionPrompt q={q} />
 
             {q.options && q.options.length > 0 ? (

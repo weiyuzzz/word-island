@@ -6,12 +6,17 @@ import { ArrowRight, Check, Flame, Lightbulb, RotateCcw, Sparkles, TreePalm, Tro
 import type { AnswerResult, ClientQuestion, ClientSession, SessionSummary } from "@/lib/types";
 import { MODE_META, STATUS_META } from "@/lib/game/srs";
 import { cn, findWordInSentence, formatRelativeTime } from "@/lib/utils";
+import { initialStudyProgress, type StudyProgress } from "@/lib/study-resume";
 import { answerAction, finishSessionAction, selfAssessAction } from "@/server/actions";
-import { Button, Card, CoinIcon, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
+import { Button, Card, CoinIcon, FamiliarityTag, Pill, ProgressBar, Ring, STATUS_TONE, SpeakButton, speak, useImmersive, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 
 interface Props {
   session: ClientSession;
+  /** 断点恢复的进度；不传则从第一题开始 */
+  initialProgress?: StudyProgress;
+  /** 进度变化时上报，供外层写入 sessionStorage */
+  onProgress?: (progress: StudyProgress) => void;
   onExit: () => void;
   onRestart: () => void;
 }
@@ -327,31 +332,57 @@ function DictationView({ target, typed, onType, attempt, stage, locked, pending,
   );
 }
 
-export function QuizSession({ session, onExit, onRestart }: Props) {
+export function QuizSession({ session, initialProgress, onProgress, onExit, onRestart }: Props) {
   const toast = useToast();
   const confirm = useConfirm();
   useImmersive(true);
-  const [index, setIndex] = useState(0);
-  const [phase, setPhase] = useState<"answering" | "feedback" | "summary">("answering");
-  const [chosen, setChosen] = useState<string | null>(null);
-  const [typed, setTyped] = useState("");
-  const [usedHint, setUsedHint] = useState(false);
-  const [result, setResult] = useState<AnswerResult | null>(null);
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
-  const [earned, setEarned] = useState({ coins: 0, xp: 0, correct: 0, answered: 0 });
-  const [sessionStreak, setSessionStreak] = useState(0);
+  const restored = initialProgress ?? initialStudyProgress();
+  const [index, setIndex] = useState(restored.index);
+  const [phase, setPhase] = useState<"answering" | "feedback" | "summary">(restored.phase);
+  const [chosen, setChosen] = useState<string | null>(restored.chosen);
+  const [typed, setTyped] = useState(restored.typed);
+  const [usedHint, setUsedHint] = useState(restored.usedHint);
+  const [result, setResult] = useState<AnswerResult | null>(restored.result);
+  const [summary, setSummary] = useState<SessionSummary | null>(restored.summary);
+  const [earned, setEarned] = useState(restored.earned);
+  const [sessionStreak, setSessionStreak] = useState(restored.sessionStreak);
   const [pending, startTransition] = useTransition();
   // 纯拼写（听写）多轮尝试：第 1 遍盲拼 → 判错 → 第 2 遍阴影跟拼 → 第 3 遍再盲拼……直到拼对
-  const [dictTyped, setDictTyped] = useState("");
-  const [dictAttempt, setDictAttempt] = useState(1);
-  const [dictLocalWrong, setDictLocalWrong] = useState(false);
-  const [dictIndex, setDictIndex] = useState(index);
+  const [dictTyped, setDictTyped] = useState(restored.dictTyped);
+  const [dictAttempt, setDictAttempt] = useState(restored.dictAttempt);
+  const [dictLocalWrong, setDictLocalWrong] = useState(restored.dictLocalWrong);
+  const [dictIndex, setDictIndex] = useState(restored.dictIndex);
   /** 主观反馈：本题已评过（每题只评一次） */
-  const [assessedIndex, setAssessedIndex] = useState<number | null>(null);
+  const [assessedIndex, setAssessedIndex] = useState<number | null>(restored.assessedIndex);
   const startRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
   /** 「不再提示」偏好（localStorage 持久化） */
   const assessOff = useSyncExternalStore(subscribeAssessPref, getAssessPref, () => false);
+
+  // 答题进度上报：任一关键状态变化即通知外层写入 sessionStorage，实现切页后断点恢复。
+  // 用 ref 保存回调，避免内联函数变化导致 effect 频繁重跑。
+  const onProgressRef = useRef(onProgress);
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  });
+  useEffect(() => {
+    onProgressRef.current?.({
+      index,
+      phase,
+      chosen,
+      typed,
+      usedHint,
+      result,
+      summary,
+      earned,
+      sessionStreak,
+      dictTyped,
+      dictAttempt,
+      dictLocalWrong,
+      dictIndex,
+      assessedIndex,
+    });
+  }, [index, phase, chosen, typed, usedHint, result, summary, earned, sessionStreak, dictTyped, dictAttempt, dictLocalWrong, dictIndex, assessedIndex]);
 
   const q = session.questions[index];
   const total = session.total;
@@ -369,11 +400,13 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
   useEffect(() => {
     startRef.current = Date.now();
     if (q?.mode === "spelling") setTimeout(() => inputRef.current?.focus(), 50);
-    if (q?.mode === "dictation") {
-      const t = setTimeout(() => speak(q.word ?? ""), 250);
+    // 每道题出现时自动朗读一遍目标单词（含中译英/拼写/语境等题干不显示英文的题型）。
+    // 稍作延迟等待切题动画与音频初始化；换题时才触发，重试同一题不会重复念。
+    if (q?.speakWord) {
+      const t = setTimeout(() => speak(q.speakWord ?? ""), 250);
       return () => clearTimeout(t);
     }
-  }, [index, q?.mode, q?.word]);
+  }, [index, q?.mode, q?.speakWord]);
 
   const submit = useCallback(
     (answer: string) => {
@@ -656,6 +689,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
         <span className="inline-flex items-center gap-1.5">
           {q.isNew && <Pill tone="sun">新词</Pill>}
           {practiceOnly && <Pill tone="coral">错题练习 · 不计统计</Pill>}
+          <FamiliarityTag proficiency={q.proficiency ?? 0} showValue />
           <Pill tone="ocean">{modeMeta.label}</Pill>
         </span>
       </div>
@@ -758,6 +792,7 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
             </span>
             <span className="flex min-w-0 items-center gap-2 text-sm">
               <span className="truncate font-semibold">{result.word.word}</span>
+              <FamiliarityTag proficiency={result.proficiency} />
               <span className="hidden truncate text-slate-500 sm:inline">{result.word.meaning}</span>
               {!result.alreadyAnswered && (
                 <>
@@ -827,7 +862,10 @@ export function QuizSession({ session, onExit, onRestart }: Props) {
                       </>
                     )}
                   </div>
-                  <div className="mt-1 text-slate-400">熟练度 {result.proficiency}% · 下次复习 {formatRelativeTime(result.nextReviewAt)}</div>
+                  <div className="mt-1 flex items-center justify-end gap-1.5">
+                    <FamiliarityTag proficiency={result.proficiency} />
+                    <span className="text-slate-400">下次复习 {formatRelativeTime(result.nextReviewAt)}</span>
+                  </div>
                 </div>
               </div>
               <p className="mt-3 text-base font-medium">{result.word.meaning}</p>

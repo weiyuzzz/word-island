@@ -7,6 +7,7 @@ import type { ClientSession, DeckSummary, SessionKind } from "@/lib/types";
 import { SESSION_SIZES } from "@/lib/game/economy";
 import { MODE_META } from "@/lib/game/srs";
 import { cn } from "@/lib/utils";
+import { clearStudyResume, initialStudyProgress, isResumable, saveStudyResume, useStudyResumeSnapshot, type StudyProgress } from "@/lib/study-resume";
 import { startSessionAction } from "@/server/actions";
 import { Button, Card, Pill, useToast } from "../ui";
 import { QuizSession } from "./quiz-session";
@@ -20,7 +21,7 @@ interface Props {
 
 const KINDS: { key: SessionKind; title: string; desc: string; icon: typeof Shuffle }[] = [
   { key: "mixed", title: "混合练习", desc: "待复习 + 新词，智能搭配（推荐）", icon: Shuffle },
-  { key: "mixed_dictation", title: "混合+听写", desc: "混合题型，穿插纯拼写听写", icon: Ear },
+  { key: "mixed_dictation", title: "纯听写", desc: "待复习 + 新词，全部逐字母听写", icon: Ear },
   { key: "review", title: "只复习", desc: "巩固到期的单词", icon: Brain },
   { key: "new", title: "只学新词", desc: "认识新的单词", icon: Sparkles },
   { key: "dictation", title: "纯拼写", desc: "听发音逐字母拼写（听写模式）", icon: Keyboard },
@@ -41,8 +42,26 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
   const [wrongStyle, setWrongStyle] = useState<"mixed" | "dictation">("mixed");
   const [size, setSize] = useState<number>(10);
   const [customSize, setCustomSize] = useState<string>("");
-  const [session, setSession] = useState<ClientSession | null>(null);
+  const [sessionState, setSessionState] = useState<ClientSession | null>(null);
+  const [progressState, setProgressState] = useState<StudyProgress | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // 订阅式读取断点快照：SSR 与首帧均为 null，客户端挂载后自动拿到真实值（无 hydration 冲突）
+  const resumeSnapshot = useStudyResumeSnapshot();
+  const resumable = isResumable(resumeSnapshot) ? resumeSnapshot : null;
+
+  // 当前会话：优先本次新开的；否则用断点恢复的
+  const session = sessionState ?? resumable?.session ?? null;
+  // 传给 QuizSession 的初始进度：优先本次上报的；否则用断点快照的
+  const progress: StudyProgress = progressState ?? resumable?.progress ?? initialStudyProgress();
+
+  // 答题进行中持续写入快照，供切页后恢复；进入结算阶段则清除（学习已完成）
+  const handleProgress = (next: StudyProgress) => {
+    setProgressState(next);
+    if (!session) return;
+    if (next.phase === "summary") clearStudyResume();
+    else saveStudyResume({ session, progress: next, savedAt: Date.now() });
+  };
 
   const currentDeck = decks.find((d) => d.id === deckId) ?? null;
   const due = currentDeck ? currentDeck.due : totals.due;
@@ -55,13 +74,34 @@ export function StudyLauncher({ decks, initialDeckId, initialKind, totals }: Pro
     startTransition(async () => {
       const res = await startSessionAction({ deckId, kind: effKind, size });
       if (!res.ok) return toast({ kind: "error", title: res.error });
-      setSession(res.data);
+      clearStudyResume();
+      setProgressState(initialStudyProgress());
+      setSessionState(res.data);
       window.scrollTo({ top: 0 });
     });
   };
 
   if (session) {
-    return <QuizSession key={session.id} session={session} onExit={() => setSession(null)} onRestart={() => { setSession(null); start(); }} />;
+    const exitStudy = () => {
+      clearStudyResume();
+      setSessionState(null);
+      setProgressState(null);
+    };
+    return (
+      <QuizSession
+        key={session.id}
+        session={session}
+        initialProgress={progress}
+        onProgress={handleProgress}
+        onExit={exitStudy}
+        onRestart={() => {
+          clearStudyResume();
+          setSessionState(null);
+          setProgressState(null);
+          start();
+        }}
+      />
+    );
   }
 
   if (totalWords === 0) {

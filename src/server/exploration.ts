@@ -84,8 +84,15 @@ function toDetail(w: WordRow): WordDetail {
   };
 }
 
-function toClientQuestion(q: { wordId: number; mode: QuizMode; options: string[]; prompt: string | null; isNew: boolean }, w: WordRow, index: number): ClientQuestion {
-  const base: ClientQuestion = { index, wordId: q.wordId, mode: q.mode, isNew: q.isNew };
+interface WordEntry {
+  w: WordRow;
+  proficiency: number;
+}
+
+function toClientQuestion(q: { wordId: number; mode: QuizMode; options: string[]; prompt: string | null; isNew: boolean }, entry: WordEntry, index: number): ClientQuestion {
+  const { w, proficiency } = entry;
+  // speakWord 始终带上标准拼写，供所有题型在单词出现时自动朗读；题干是否显示英文仍由各分支决定。
+  const base: ClientQuestion = { index, wordId: q.wordId, mode: q.mode, isNew: q.isNew, speakWord: w.word, proficiency };
   switch (q.mode) {
     case "en2zh":
       return { ...base, word: w.word, phonetic: w.phonetic, pos: w.pos, options: q.options };
@@ -252,7 +259,7 @@ async function generateEvents(region: RegionDef, userId: number, kit: boolean, e
 
 // ---------- 视图构建 ----------
 
-function eventView(row: EventRow, wordMap: Map<number, WordRow>, damage = 0): ClientEventView {
+function eventView(row: EventRow, wordMap: Map<number, WordEntry>, damage = 0): ClientEventView {
   const payload = row.payload;
   const nextIndex = payload.questions.findIndex((q) => !q.answered);
   const q = nextIndex >= 0 ? payload.questions[nextIndex] : null;
@@ -278,14 +285,19 @@ function eventView(row: EventRow, wordMap: Map<number, WordRow>, damage = 0): Cl
   };
 }
 
-async function loadWordMap(eventRows: EventRow[]): Promise<Map<number, WordRow>> {
+async function loadWordMap(eventRows: EventRow[]): Promise<Map<number, WordEntry>> {
   const ids = [...new Set(eventRows.flatMap((e) => e.payload.questions.map((q) => q.wordId)))];
   if (ids.length === 0) return new Map();
-  const rows = await db.select().from(words).where(inArray(words.id, ids));
-  return new Map(rows.map((w) => [w.id, w]));
+  const uid = await currentUserId();
+  const rows = await db
+    .select({ w: words, proficiency: wordProgress.proficiency })
+    .from(words)
+    .leftJoin(wordProgress, and(eq(wordProgress.wordId, words.id), eq(wordProgress.userId, uid)))
+    .where(inArray(words.id, ids));
+  return new Map(rows.map((r) => [r.w.id, { w: r.w, proficiency: r.proficiency ?? 0 }]));
 }
 
-async function expeditionView(executor: DbExecutor, run: ExplorationRow, events: EventRow[], wordMap: Map<number, WordRow>, region: RegionDef, player: PlayerRow): Promise<ExpeditionView> {
+async function expeditionView(executor: DbExecutor, run: ExplorationRow, events: EventRow[], wordMap: Map<number, WordEntry>, region: RegionDef, player: PlayerRow): Promise<ExpeditionView> {
   return {
     id: run.id,
     regionKey: run.regionKey,
@@ -629,7 +641,7 @@ interface BuildResultInput {
   eventReward: { coins: number; xp: number; item: string | null } | null;
   quests: QuestView[];
   leveledUp: boolean;
-  wordMap: Map<number, WordRow>;
+  wordMap: Map<number, WordEntry>;
 }
 
 function buildResult(input: BuildResultInput): EventResult {
