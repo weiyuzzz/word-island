@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, CheckCircle2, FileUp, Upload } from "lucide-react";
 import type { DeckSummary, ImportResult } from "@/lib/types";
 import { CSV_TEMPLATE, detectFormat, parseImport, type ImportFormat } from "@/lib/vocab/parse";
 import { cn } from "@/lib/utils";
-import { importWordsAction } from "@/server/actions";
+import { checkCrossDeckDuplicatesAction, importWordsAction } from "@/server/actions";
 import { Button, Modal, useToast } from "../ui";
 
 interface Props {
@@ -29,6 +29,27 @@ export function ImportDialog({ open, onClose, decks, defaultDeckId, onDone }: Pr
   const fileRef = useRef<HTMLInputElement>(null);
 
   const preview = useMemo(() => (text.trim() ? parseImport(text, format) : null), [text, format]);
+  const previewWords = useMemo(() => preview?.items.map((it) => it.word) ?? [], [preview]);
+  const excludeDeckId = target === "new" ? null : Number(target);
+  const [crossDup, setCrossDup] = useState<{ count: number; names: string[] } | null>(null);
+
+  // 导入前预览：当前文本里的单词是否已在其他词库出现（排除导入目标词库）
+  const checkCross = useCallback(async () => {
+    if (previewWords.length === 0) {
+      setCrossDup(null);
+      return;
+    }
+    const res = await checkCrossDeckDuplicatesAction(previewWords, excludeDeckId);
+    if (!res.ok) return;
+    const names = [...new Set(res.data.map((d) => d.deckName))];
+    setCrossDup({ count: res.data.length, names });
+  }, [previewWords, excludeDeckId]);
+
+  useEffect(() => {
+    // 外部数据（跨词库查重）依赖变化时重新拉取；checkCross 内先同步清空避免展示过期结果
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void checkCross();
+  }, [checkCross]);
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -49,7 +70,10 @@ export function ImportDialog({ open, onClose, decks, defaultDeckId, onDone }: Pr
       if (!res.ok) return toast({ kind: "error", title: res.error });
       setResult(res.data);
       onDone(res.data);
-      toast({ kind: "success", title: `成功导入 ${res.data.imported} 个单词`, description: res.data.duplicates ? `跳过 ${res.data.duplicates} 个已存在的单词` : undefined });
+      const desc = [res.data.duplicates ? `跳过 ${res.data.duplicates} 个已存在的单词` : "", res.data.crossDeckDuplicates ? `${res.data.crossDeckDuplicates} 个在其他词库中也存在` : ""]
+        .filter(Boolean)
+        .join("；");
+      toast({ kind: "success", title: `成功导入 ${res.data.imported} 个单词`, description: desc || undefined });
     });
   };
 
@@ -103,6 +127,12 @@ export function ImportDialog({ open, onClose, decks, defaultDeckId, onDone }: Pr
               <div className="text-sm text-slate-600">
                 新增 {result.imported} 个 · 已存在跳过 {result.duplicates} 个 · 文件内重复 {result.duplicatesInFile} 个 · 错误 {result.errors.length} 条
               </div>
+              {result.crossDeckDuplicates > 0 && (
+                <div className="mt-1 flex items-start gap-1.5 text-sm text-sun-600">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>其中 {result.crossDeckDuplicates} 个单词在其他词库中也存在（已导入，未跳过）。</span>
+                </div>
+              )}
             </div>
           </div>
           {result.errors.length > 0 && (
@@ -188,6 +218,15 @@ export function ImportDialog({ open, onClose, decks, defaultDeckId, onDone }: Pr
                 <span className="text-slate-500">文件内重复 {preview.duplicatesInFile}</span>
                 <span className={cn(preview.issues.length ? "text-coral-500" : "text-slate-500")}>错误 {preview.issues.length}</span>
               </div>
+              {crossDup && crossDup.count > 0 && (
+                <div className="mt-2 flex items-start gap-1.5 rounded-xl bg-sun-100/50 px-2.5 py-2 text-xs text-sun-600">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    {crossDup.count} 个单词已在其他词库中存在（{crossDup.names.slice(0, 3).join("、")}
+                    {crossDup.names.length > 3 ? " 等" : ""}），导入时仍会新增，不会覆盖原词库记录。
+                  </span>
+                </div>
+              )}
               {preview.items.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {preview.items.slice(0, 12).map((it) => (

@@ -8,7 +8,7 @@ import { STATUS_META, proficiencyLabel } from "@/lib/game/srs";
 import { BUILTIN_DECKS } from "@/data/vocabulary";
 import type { ImportFormat, WordInput } from "@/lib/vocab/parse";
 import { cn, formatRelativeTime, percent } from "@/lib/utils";
-import { addWordAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, restoreBuiltinDeckAction, shareDeckAction, updateWordAction } from "@/server/actions";
+import { addWordAction, checkCrossDeckDuplicatesAction, createDeckAction, deleteDeckAction, deleteWordAction, exportDeckAction, getWordsAction, listDecksAction, restoreBuiltinDeckAction, shareDeckAction, updateWordAction } from "@/server/actions";
 import { Button, Card, EmptyState, Modal, Pill, ProgressBar, STATUS_TONE, SpeakButton, useToast } from "../ui";
 import { ConfirmDialog, useConfirm } from "../confirm-dialog";
 import { ImportDialog } from "./import-dialog";
@@ -171,16 +171,35 @@ export function VocabManager({ initialDecks, initialDeckId }: { initialDecks: De
   };
 
   const saveWord = () => {
-    if (!editing) return;
+    if (!editing || pending) return;
+    const word = editing.form.word.trim();
+    const doSave = () => {
+      startTransition(async () => {
+        const res = editing.id ? await updateWordAction(editing.id, editing.form) : deckId ? await addWordAction(deckId, editing.form) : null;
+        if (!res) return;
+        if (!res.ok) return toast({ kind: "error", title: res.error });
+        toast({ kind: "success", title: editing.id ? "单词已更新" : `已添加「${word}」` });
+        setEditing(null);
+        setDetail(null);
+        await load();
+        void refreshDecks();
+      });
+    };
+
+    // 跨词库查重：若该词已存在于当前用户的其他词库，先提示确认再保存
     startTransition(async () => {
-      const res = editing.id ? await updateWordAction(editing.id, editing.form) : deckId ? await addWordAction(deckId, editing.form) : null;
-      if (!res) return;
-      if (!res.ok) return toast({ kind: "error", title: res.error });
-      toast({ kind: "success", title: editing.id ? "单词已更新" : `已添加「${editing.form.word}」` });
-      setEditing(null);
-      setDetail(null);
-      await load();
-      void refreshDecks();
+      const dup = await checkCrossDeckDuplicatesAction([word], deckId);
+      if (dup.ok && dup.data.length > 0) {
+        const names = [...new Set(dup.data.map((d) => d.deckName))];
+        confirm.confirm({
+          title: "该词已在其他词库中存在",
+          description: `「${word}」已存在于词库「${names.join("、")}」中。仍要添加到「${deck?.name ?? "当前词库"}」吗？`,
+          confirmLabel: "仍然添加",
+          onConfirm: doSave,
+        });
+      } else {
+        doSave();
+      }
     });
   };
 

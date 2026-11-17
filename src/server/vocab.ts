@@ -1,9 +1,9 @@
 import { db } from "@/db";
 import { articleNotes, decks, wordProgress, words } from "@/db/schema";
-import { and, asc, desc, eq, gt, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { BUILTIN_DECKS, rowToWord } from "@/data/vocabulary";
 import { parseImport, toCsv, toJson, type ImportFormat, type WordInput } from "@/lib/vocab/parse";
-import type { DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
+import type { CrossDeckDuplicate, DeckSummary, ImportResult, WordStatus, WordView } from "@/lib/types";
 import { normalizeWord } from "@/lib/utils";
 import { prefetchAudioInBackground } from "./audio";
 import { ensureSeeded } from "./player";
@@ -198,6 +198,24 @@ async function ownedDeck(deckId: number, uid: number) {
   return deck;
 }
 
+/**
+ * 跨词库查重：查询这些词在当前用户的其他词库（可排除一个目标词库）中是否已存在。
+ * 用于添加/导入单词时提示用户「该词已在 XX 词库中出现」，避免跨词库重复录入。
+ */
+export async function findCrossDeckDuplicates(wordsToCheck: string[], excludeDeckId?: number | null): Promise<CrossDeckDuplicate[]> {
+  const keys = [...new Set(wordsToCheck.map(normalizeWord).filter(Boolean))];
+  if (keys.length === 0) return [];
+  const uid = await currentUserId();
+  const conditions = [eq(words.userId, uid), inArray(words.wordKey, keys)];
+  if (excludeDeckId) conditions.push(ne(words.deckId, excludeDeckId));
+  const rows = await db
+    .selectDistinct({ word: words.word, deckId: words.deckId, deckName: decks.name })
+    .from(words)
+    .innerJoin(decks, eq(decks.id, words.deckId))
+    .where(and(...conditions));
+  return rows;
+}
+
 export async function addWord(deckId: number, input: WordInput): Promise<number> {
   const uid = await currentUserId();
   await ownedDeck(deckId, uid);
@@ -242,7 +260,7 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
   const uid = await currentUserId();
   const parsed = parseImport(input.text, input.format);
   if (parsed.items.length === 0 && parsed.issues.length > 0 && !input.deckId && !input.newDeckName) {
-    return { deckId: 0, deckName: "", imported: 0, duplicates: 0, duplicatesInFile: parsed.duplicatesInFile, errors: parsed.issues };
+    return { deckId: 0, deckName: "", imported: 0, duplicates: 0, duplicatesInFile: parsed.duplicatesInFile, crossDeckDuplicates: 0, errors: parsed.issues };
   }
   return db.transaction(async (tx) => {
     let deckId = input.deckId;
@@ -274,6 +292,16 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
     for (let i = 0; i < toInsert.length; i += 200) {
       await tx.insert(words).values(toInsert.slice(i, i + 200)).onConflictDoNothing();
     }
+    // 跨词库查重：统计本次导入的词里，有多少已在用户的其他词库出现过（不跳过，仅提示）
+    let crossDeckDuplicates = 0;
+    const insertKeys = [...new Set(toInsert.map((w) => w.wordKey))];
+    if (insertKeys.length > 0) {
+      const crossRows = await tx
+        .selectDistinct({ key: words.wordKey })
+        .from(words)
+        .where(and(eq(words.userId, uid), ne(words.deckId, deckId), inArray(words.wordKey, insertKeys)));
+      crossDeckDuplicates = crossRows.length;
+    }
     // 后台预取本次导入单词的发音（不阻塞返回；漏拉的会在播放时按需补拉）
     prefetchAudioInBackground(toInsert.map((w) => w.word));
     return {
@@ -282,6 +310,7 @@ export async function importWords(input: ImportInput): Promise<ImportResult> {
       imported: toInsert.length,
       duplicates,
       duplicatesInFile: parsed.duplicatesInFile,
+      crossDeckDuplicates,
       errors: parsed.issues.slice(0, 50),
     };
   });

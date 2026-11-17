@@ -73,6 +73,10 @@ export const schemas = {
     input: WORD_INPUT,
   }),
   deleteWord: z.number().int().positive(),
+  checkCrossDeckDuplicates: z.object({
+    words: z.array(z.string().trim().min(1).max(64)).min(1).max(500),
+    excludeDeckId: z.number().int().positive().nullable().optional(),
+  }),
   importWords: z.object({
     deckId: z.number().int().positive().nullable(),
     newDeckName: z.string().trim().max(64).nullable(),

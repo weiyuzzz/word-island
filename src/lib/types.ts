@@ -230,7 +230,16 @@ export interface ImportResult {
   imported: number;
   duplicates: number;
   duplicatesInFile: number;
+  /** 跨词库重复：词已存在于用户的其他词库（导入未跳过，仅统计提示） */
+  crossDeckDuplicates: number;
   errors: { line: number; reason: string }[];
+}
+
+/** 跨词库查重结果：某词在用户其他词库中的命中情况 */
+export interface CrossDeckDuplicate {
+  word: string;
+  deckId: number;
+  deckName: string;
 }
 
 export interface DailyStatPoint {

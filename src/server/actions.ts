@@ -7,7 +7,7 @@ import { buildAt, buyTheme, claimIsleReward, lighthouseCheckIn, moveBuilding, pl
 import { getRaidDetail, resolveRaidWave } from "./island-raid";
 import { createSession, finishSession, selfAssess, submitAnswer } from "./study";
 import { claimTask } from "./tasks";
-import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, getWords, importWords, listDecks, restoreBuiltinDeck, shareDeck, updateWord } from "./vocab";
+import { addWord, createDeck, deleteDeck, deleteWord, exportDeck, findCrossDeckDuplicates, getWords, importWords, listDecks, restoreBuiltinDeck, shareDeck, updateWord } from "./vocab";
 import { exportProgress } from "./backup";
 import {
   adminCreateUser,
@@ -194,6 +194,12 @@ export async function deleteWordAction(id: number) {
   const parsed = schemas.deleteWord.safeParse(id);
   if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
   return run(() => deleteWord(parsed.data));
+}
+
+export async function checkCrossDeckDuplicatesAction(words: string[], excludeDeckId?: number | null) {
+  const parsed = schemas.checkCrossDeckDuplicates.safeParse({ words, excludeDeckId: excludeDeckId ?? null });
+  if (!parsed.success) return { ok: false, error: sanitizeError(parsed.error) } as ActionResult<never>;
+  return run(() => findCrossDeckDuplicates(parsed.data.words, parsed.data.excludeDeckId));
 }
 
 export async function importWordsAction(input: { deckId: number | null; newDeckName: string | null; text: string; format: ImportFormat }) {
